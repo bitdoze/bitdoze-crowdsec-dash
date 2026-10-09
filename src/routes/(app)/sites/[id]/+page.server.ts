@@ -1,15 +1,27 @@
 import { error } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.ts';
-import { site } from '#lib/server/db/app.schema.ts';
+import {
+	activityRollup,
+	alert,
+	alertSite,
+	configArtifact,
+	site
+} from '#lib/server/db/app.schema.ts';
 import { requirePermission, requireUser } from '#lib/server/roles.ts';
 import { recordAudit } from '#lib/server/audit.ts';
 import { hasPermission } from '#lib/roles.ts';
 import { probeSite } from '#lib/server/protect/detect.ts';
 import { listArtifacts, markArtifact, regeneratePlan } from '#lib/server/protect/plan.ts';
 import { CHECKS, listChecks, markTestWindow, runSiteChecks } from '#lib/server/protect/checks.ts';
-import { TEST_PATH } from '#lib/server/protect/templates.ts';
+import { TEST_PATH, driftHash } from '#lib/server/protect/templates.ts';
+import {
+	parseAliases,
+	parseCollections,
+	validateAliases,
+	validateCollections
+} from '#lib/sites.ts';
 import { agentHello, callAgent } from '#lib/server/agent/client.ts';
 import { enqueue } from '#lib/server/jobs/queue.ts';
 import { discoverTraefik, matchSite, parseDockerPs } from '#lib/server/protect/traefik.ts';
@@ -53,14 +65,54 @@ export const load: PageServerLoad = async (event) => {
 		if (typeof d === 'string' && /^\/\S{1,200}$/.test(d))
 			proxyRoots.push(d.endsWith('/') ? d : `${d}/`);
 	}
+	// Site activity: recent attributed alerts + the last 24h of the hourly
+	// rollup for the trend strip. Level-4 WAF gating needs observed CRS
+	// alerts (level 3 runs CRS out-of-band precisely to produce them).
+	const [recent, rollup, crs] = await Promise.all([
+		db
+			.select({
+				upstreamId: alert.upstreamId,
+				scenario: alert.scenario,
+				sourceIp: alert.sourceIp,
+				startedAt: alert.startedAt
+			})
+			.from(alertSite)
+			.innerJoin(alert, eq(alertSite.alertUpstreamId, alert.upstreamId))
+			.where(eq(alertSite.siteId, s.id))
+			.orderBy(desc(alert.startedAt))
+			.limit(8),
+		db
+			.select({
+				hour: activityRollup.hour,
+				total: sql<number>`sum(${activityRollup.count})`
+			})
+			.from(activityRollup)
+			.where(
+				sql`${activityRollup.siteId} = ${s.id} AND ${activityRollup.hour} > ${Date.now() - 7 * 24 * 3600_000}`
+			)
+			.groupBy(activityRollup.hour),
+		db
+			.select({ n: sql<number>`count(*)` })
+			.from(alertSite)
+			.innerJoin(alert, eq(alertSite.alertUpstreamId, alert.upstreamId))
+			.where(sql`${alertSite.siteId} = ${s.id} AND ${alert.scenario} LIKE 'crowdsecurity/appsec-%'`)
+	]);
 	return {
 		site: s,
+		aliases: parseAliases(s.aliases),
+		exclusions: parseCollections(s.appsecExclusions),
 		detection,
 		proxyRoots,
+		crsAlerts: crs[0]?.n ?? 0,
+		activity: {
+			recent,
+			hours: rollup.map((r) => ({ hour: r.hour, total: r.total }))
+		},
 		artifacts: artifacts.map((a) => ({
 			...a,
 			target: a.content.match(/^# (\/\S+)$/m)?.[1] ?? null,
 			needsKey: NEED_KEY(a),
+			expectedHash: driftHash(a.content),
 			managed: !!MANAGED[a.kind] && !!a.content.match(/^# (\/\S+)$/m)?.[1]
 		})),
 		agent: hello,
@@ -430,6 +482,130 @@ export const actions: Actions = {
 		});
 		return {
 			notice: `Adopted ${s.proxy} — proxy-config artifacts can now be applied via the agent.`
+		};
+	},
+
+	/**
+	 * Site policy (spec 9): hostname aliases, WAF level, remediation preset.
+	 * Level 4 (in-band CRS) is gated on observed level-3 CRS alerts — the
+	 * observe-first flow needs evidence the site would have blocked before
+	 * going blocking. Aliases are validated and must not collide with other
+	 * sites' names (ambiguous attribution is worse than none).
+	 */
+	setPolicy: async (event) => {
+		requirePermission(event, 'operate');
+		const s = await loadSite(event.params.id);
+		const formData = await event.request.formData();
+		const waf = text(formData, 'wafLevel');
+		const preset = text(formData, 'remediationPreset');
+		const aliased = validateAliases(text(formData, 'aliases'), s.hostname);
+		if ('error' in aliased) return { notice: aliased.error };
+		// Alias collisions with other sites make attribution ambiguous — refuse.
+		const others = await db
+			.select({ id: site.id, hostname: site.hostname, aliases: site.aliases })
+			.from(site)
+			.where(sql`${site.id} != ${s.id}`);
+		for (const o of others) {
+			const names = new Set([o.hostname.toLowerCase(), ...parseAliases(o.aliases)]);
+			for (const a of aliased.aliases) {
+				if (names.has(a))
+					return {
+						notice: `"${a}" already names or aliases site ${o.hostname} — attribution would be ambiguous.`
+					};
+			}
+		}
+		const WAF = ['off', '1', '2', '3', '4'] as const;
+		const wafLevel = (WAF as readonly string[]).includes(waf)
+			? (waf as (typeof WAF)[number])
+			: s.wafLevel;
+		if (wafLevel === '4' && s.wafLevel !== '4') {
+			// Level-4 gate: in-band CRS only after observed out-of-band alerts.
+			const [{ n }] = await db
+				.select({ n: sql<number>`count(*)` })
+				.from(alertSite)
+				.innerJoin(alert, eq(alertSite.alertUpstreamId, alert.upstreamId))
+				.where(
+					sql`${alertSite.siteId} = ${s.id} AND ${alert.scenario} LIKE 'crowdsecurity/appsec-%'`
+				);
+			if (!n)
+				return {
+					notice:
+						'Level 4 blocks CRS matches in-band — run level 3 first so CRS alerts are observed. No CRS alerts seen for this site yet.'
+				};
+		}
+		const PRESETS = ['flat', 'escalating', 'captcha'] as const;
+		const remediationPreset = (PRESETS as readonly string[]).includes(preset)
+			? (preset as (typeof PRESETS)[number])
+			: s.remediationPreset;
+		const exclusions = validateCollections(text(formData, 'exclusions'));
+		if ('error' in exclusions) return { notice: exclusions.error };
+		await db
+			.update(site)
+			.set({
+				aliases: JSON.stringify(aliased.aliases),
+				wafLevel,
+				remediationPreset,
+				appsecExclusions: JSON.stringify(exclusions.items)
+			})
+			.where(eq(site.id, s.id));
+		await regeneratePlan(db, s.id);
+		await recordAudit({
+			event,
+			action: 'site.configured',
+			detail: {
+				hostname: s.hostname,
+				wafLevel,
+				remediationPreset,
+				aliases: aliased.aliases.length
+			}
+		});
+		return { notice: 'Policy saved — artifacts regenerated.' };
+	},
+
+	/**
+	 * Drift view (spec 9): read each complete-file artifact's declared target
+	 * through the agent and hash-compare against the desired content. The
+	 * bouncer-key line is normalized on both sides, so a substituted key is
+	 * not drift. Observed-at is stamped even on unreadable targets.
+	 */
+	checkDrift: async (event) => {
+		requirePermission(event, 'operate');
+		const s = await loadSite(event.params.id);
+		const hello = await agentHello(true);
+		if (!hello?.caps.files) return { notice: 'Agent file access is not configured.' };
+		const artifacts = await listArtifacts(db, s.id);
+		const now = new Date();
+		let checked = 0;
+		let drifted = 0;
+		for (const a of artifacts) {
+			const target = a.content.match(/^# (\/\S+)$/m)?.[1];
+			if (!target) continue;
+			const r = await callAgent<{ content?: string }>('file.read', { path: target });
+			if (r.ok && typeof r.result.content === 'string') {
+				const observed = driftHash(r.result.content);
+				if (observed !== driftHash(a.content)) drifted++;
+				await db
+					.update(configArtifact)
+					.set({ observedHash: observed, observedAt: now })
+					.where(eq(configArtifact.id, a.id));
+			} else {
+				// Unreadable/absent — record the observation with no hash.
+				await db
+					.update(configArtifact)
+					.set({ observedHash: 'missing', observedAt: now })
+					.where(eq(configArtifact.id, a.id));
+			}
+			checked++;
+		}
+		await recordAudit({
+			event,
+			action: 'site.drift_checked',
+			detail: { hostname: s.hostname, checked, drifted }
+		});
+		return {
+			notice: checked
+				? `Observed ${checked} file(s): ${drifted ? `${drifted} drifted` : 'all in sync'}.`
+				: 'No complete-file artifacts with declared targets to observe.'
 		};
 	}
 };

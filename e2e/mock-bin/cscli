@@ -10,13 +10,33 @@ case "$*" in
 		echo '[{"name":"e2e-bouncer","type":"caddy","version":"v0.14.1","last_pull":"2024-01-01T00:00:00Z","revoked":false}]'
 		;;
 	"hub list -o json")
-		echo '{"collections":[{"name":"crowdsecurity/caddy","status":"enabled","local_version":"v0.1"},{"name":"crowdsecurity/nginx","status":"enabled","local_version":"v0.3"}],"parsers":[{"name":"crowdsecurity/nginx-logs","status":"enabled","local_version":"v1.5"}]}'
+		echo '{"collections":[{"name":"crowdsecurity/caddy","status":"enabled","local_version":"v0.1"},{"name":"crowdsecurity/nginx","status":"enabled","local_version":"v0.3"}],"parsers":[{"name":"crowdsecurity/nginx-logs","status":"enabled","local_version":"v1.5"}],"scenarios":[{"name":"crowdsecurity/http-probing","status":"enabled","local_version":"v1.0"},{"name":"crowdsecurity/http-crawl-non_statics","status":"enabled","local_version":"v0.7"}]}'
 		;;
 	"allowlists list -o json")
 		echo '[{"name":"dashboard-admin","members":["203.0.113.7"]}]'
 		;;
 	"simulation status -o json")
-		echo '{"simulation_mode":false}'
+		# Reads the state file a prior `simulation enable` wrote so the UI
+		# reflects toggles; absent → defaults.
+		if [ -f "${SIMULATION_STATE:-/dev/null}" ]; then
+			cat "${SIMULATION_STATE}"
+		else
+			echo '{"simulation_mode":false,"items":{"crowdsecurity/http-probing":true}}'
+		fi
+		;;
+	"simulation enable "*|"simulation disable "*)
+		# Persist a status the next `simulation status` reports back.
+		scope=$(echo "$*" | awk '{print $3}')
+		if [ -n "${SIMULATION_STATE:-}" ]; then
+			case "$*" in
+				"simulation enable "*)
+					echo "{\"simulation_mode\":false,\"items\":{\"$scope\":true}}" > "${SIMULATION_STATE}"
+					;;
+				*)
+					echo '{"simulation_mode":false,"items":{}}' > "${SIMULATION_STATE}"
+					;;
+			esac
+		fi
 		;;
 	"bouncers add "*)
 		# Deterministic key so e2e can verify placeholder substitution.

@@ -162,4 +162,78 @@ describe('syncAlerts', () => {
 		const [state] = await db.select().from(syncState);
 		expect(state.partial).toBe(true);
 	});
+
+	it('attributes alerts to a manual site via its aliases', async () => {
+		const siteId = crypto.randomUUID();
+		await db.insert(site).values({
+			id: siteId,
+			hostname: 'shop.example.com',
+			source: 'manual',
+			aliases: JSON.stringify(['api.shop.example.com', 'Shop.Example.COM'])
+		});
+		await syncAlerts(
+			db,
+			fakeClient([
+				[
+					alertFixture({
+						context: [{ key: 'target_fqdn', value: 'api.shop.example.com' }]
+					})
+				]
+			])
+		);
+		const links = await db.select().from(alertSite);
+		expect(links).toEqual([expect.objectContaining({ siteId })]);
+		// No learned site for the alias.
+		expect(await db.select().from(site)).toHaveLength(1);
+	});
+
+	it('does not attribute fqdns claimed by two sites — ambiguous wins nothing', async () => {
+		const a = crypto.randomUUID();
+		const b = crypto.randomUUID();
+		await db.insert(site).values([
+			{
+				id: a,
+				hostname: 'a.example.com',
+				source: 'manual',
+				aliases: JSON.stringify(['shared.example.com'])
+			},
+			{
+				id: b,
+				hostname: 'b.example.com',
+				source: 'manual',
+				aliases: JSON.stringify(['shared.example.com'])
+			}
+		]);
+		await syncAlerts(
+			db,
+			fakeClient([
+				[alertFixture({ context: [{ key: 'target_fqdn', value: 'shared.example.com' }] })]
+			])
+		);
+		// Ambiguous fqdn: no alert_site link, and no misleading learned site.
+		expect(await db.select().from(alertSite)).toHaveLength(0);
+		expect(await db.select().from(site)).toHaveLength(2);
+		expect(await db.select().from(alert)).toHaveLength(1);
+	});
+
+	it('a hostname wins over another site claiming it as an alias', async () => {
+		const primary = crypto.randomUUID();
+		const other = crypto.randomUUID();
+		await db.insert(site).values([
+			{ id: primary, hostname: 'real.example.com', source: 'manual' },
+			{
+				id: other,
+				hostname: 'other.example.com',
+				source: 'manual',
+				aliases: JSON.stringify(['real.example.com'])
+			}
+		]);
+		await syncAlerts(
+			db,
+			fakeClient([[alertFixture({ context: [{ key: 'target_fqdn', value: 'real.example.com' }] })]])
+		);
+		// The real hostname takes precedence — the stray alias is ignored.
+		const links = await db.select().from(alertSite);
+		expect(links).toEqual([expect.objectContaining({ siteId: primary })]);
+	});
 });

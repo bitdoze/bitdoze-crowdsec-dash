@@ -30,6 +30,7 @@ import {
 import type { LapiClient } from './client.ts';
 import { isCentralOrigin, type LapiAlert } from './types.ts';
 import { attributeAlert, mergedEventMeta, normalize, type DatasourceMap } from './attribution.ts';
+import { parseAliases } from '#lib/sites.ts';
 
 export const HISTORY_DAYS = 30;
 export const PAGE_SIZE = 500;
@@ -86,10 +87,39 @@ function isCentralOnly(a: LapiAlert): boolean {
 	return ds.length > 0 && ds.every((d) => isCentralOrigin(d.origin));
 }
 
-/** Sites keyed by hostname for datasource fallback + learned-site inserts. */
-async function siteIndex(database: Db): Promise<Map<string, string>> {
-	const rows = await database.select({ id: site.id, hostname: site.hostname }).from(site);
-	return new Map(rows.map((r) => [r.hostname, r.id]));
+/**
+ * Sites keyed by hostname for datasource fallback + learned-site inserts.
+ * Aliases resolve to the same site id; a real hostname always wins over an
+ * alias, and the same alias on two sites is ambiguous — it resolves to
+ * neither so attribution never assigns misleading ownership (spec 9).
+ */
+async function siteIndex(
+	database: Db
+): Promise<{ byName: Map<string, string>; ambiguous: Set<string> }> {
+	const rows = await database
+		.select({ id: site.id, hostname: site.hostname, aliases: site.aliases })
+		.from(site);
+	const owner = new Map<string, string>(); // hostname or alias → site id
+	const ambiguous = new Set<string>();
+	for (const r of rows) owner.set(normalize(r.hostname), r.id);
+	// Aliases: a real hostname always wins over another site's claimed alias
+	// (the alias is ignored, not ambiguous); the same alias on two sites is
+	// ambiguous and resolves to neither.
+	const aliasOwner = new Map<string, string>();
+	for (const r of rows) {
+		for (const a of parseAliases(r.aliases)) {
+			if (owner.has(a)) continue; // real hostname takes precedence
+			const prior = aliasOwner.get(a);
+			if (prior === r.id) continue;
+			if (prior) {
+				ambiguous.add(a);
+				continue;
+			}
+			aliasOwner.set(a, r.id);
+		}
+	}
+	for (const [a, id] of aliasOwner) if (!ambiguous.has(a)) owner.set(a, id);
+	return { byName: owner, ambiguous };
 }
 
 /** Datasource prefix map — manual sites may carry one later; empty for now. */
@@ -187,20 +217,22 @@ async function replaceDecisions(database: Db, a: LapiAlert) {
 async function attachSites(
 	database: Db,
 	a: LapiAlert,
-	sitesByName: Map<string, string>
+	index: { byName: Map<string, string>; ambiguous: Set<string> }
 ): Promise<string[]> {
 	await database.delete(alertSite).where(eq(alertSite.alertUpstreamId, a.id!));
 	const siteIds: string[] = [];
 	for (const hit of attributeAlert(a, datasourceMap())) {
 		const hostname = normalize(hit.hostname);
-		let siteId = sitesByName.get(hostname);
+		// Ambiguous names get no owner — never a misleading learned site.
+		if (index.ambiguous.has(hostname)) continue;
+		let siteId = index.byName.get(hostname);
 		if (!siteId) {
 			siteId = crypto.randomUUID();
 			await database
 				.insert(site)
 				.values({ id: siteId, hostname, source: 'learned' })
 				.onConflictDoNothing();
-			sitesByName.set(hostname, siteId);
+			index.byName.set(hostname, siteId);
 		}
 		await database
 			.insert(alertSite)
@@ -258,7 +290,7 @@ export async function syncAlerts(
 	let skippedCentral = 0;
 	let pages = 0;
 	let newest = since;
-	const sitesByName = await siteIndex(database);
+	const siteIdx = await siteIndex(database);
 
 	for (;;) {
 		const batch = await client.alerts({ since, limit: pageSize, includeSimulation: false });
@@ -274,7 +306,7 @@ export async function syncAlerts(
 			}
 			const { fresh } = await upsertAlert(database, a);
 			await replaceDecisions(database, a);
-			const siteIds = await attachSites(database, a, sitesByName);
+			const siteIds = await attachSites(database, a, siteIdx);
 			if (fresh) await rollupAlert(database, a, siteIds);
 			stored++;
 			const created = ts(a.created_at);

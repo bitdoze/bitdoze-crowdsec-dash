@@ -7,6 +7,7 @@
 	import Field from '#lib/components/Field.svelte';
 	import FilterSelect from '#lib/components/FilterSelect.svelte';
 	import CodeBlock from '#lib/components/CodeBlock.svelte';
+	import { REMEDIATION_PRESETS, WAF_LEVELS } from '#lib/sites.ts';
 
 	let { data, form }: PageProps = $props();
 
@@ -44,6 +45,20 @@
 	);
 	// Managed writes into the proxy's own config space need adoption (spec 8).
 	const proxyRoot = (p: string | null) => data.proxyRoots.some((r) => p?.startsWith(r));
+	// Drift badge per artifact: compare the agent-observed hash (drift-
+	// normalized) with the desired content's drift hash.
+	function driftOf(a: {
+		expectedHash: string;
+		observedHash: string | null;
+		observedAt: Date | null;
+	}) {
+		if (!a.observedAt) return null;
+		if (a.observedHash === 'missing') return { state: 'failed' as const, label: 'absent' };
+		if (a.observedHash === a.expectedHash) return { state: 'verified' as const, label: 'in sync' };
+		return { state: 'stale' as const, label: 'drifted' };
+	}
+	// 7-day hourly rollup → simple bar trend for the activity module.
+	const trendMax = $derived(Math.max(1, ...data.activity.hours.map((h) => h.total)));
 </script>
 
 <svelte:head><title>{data.site.hostname} · Sites · CrowdSec Dash</title></svelte:head>
@@ -257,6 +272,60 @@
 			{/if}
 		</Module>
 
+		<Module title="Policy">
+			{#if data.canOperate}
+				<form method="post" action="?/setPolicy" class="space-y-3">
+					<Field
+						label="Hostname aliases"
+						name="aliases"
+						value={data.aliases.join(', ')}
+						placeholder="www.{data.site.hostname}"
+						hint="Comma/space-separated names whose alerts attribute here. Unknown names learn as their own sites — keep this tight."
+					/>
+					<div class="flex flex-wrap items-end gap-3">
+						<FilterSelect
+							label="WAF level"
+							name="wafLevel"
+							value={data.site.wafLevel}
+							options={WAF_LEVELS.map((l) => ({
+								value: l.value,
+								label:
+									l.value === '4' && data.site.wafLevel !== '4' && !data.crsAlerts
+										? `${l.label} — needs CRS alerts`
+										: l.label
+							}))}
+						/>
+						<FilterSelect
+							label="Remediation"
+							name="remediationPreset"
+							value={data.site.remediationPreset}
+							options={REMEDIATION_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
+						/>
+						<Button variant="secondary" size="sm" type="submit">Save policy</Button>
+					</div>
+					<Field
+						label="AppSec exclusion collections"
+						name="exclusions"
+						value={data.exclusions.join(', ')}
+						placeholder="crowdsecurity/appsec-wordpress"
+						hint="Optional. Per-site exclusion collections installed next to the level's rules — tune out app-specific false positives."
+					/>
+					<p class="text-[11px] text-ink-3">
+						{WAF_LEVELS.find((l) => l.value === data.site.wafLevel)?.risk} · CRS alerts observed for this
+						site: {data.crsAlerts}
+						{#if !data.crsAlerts}
+							— run level 3 before level 4 so in-band CRS has observe evidence
+						{/if}
+					</p>
+				</form>
+			{:else}
+				<p class="text-sm text-ink-3">
+					WAF level {data.site.wafLevel} · {data.site.remediationPreset} remediation
+					{data.aliases.length ? `· aliases: ${data.aliases.join(', ')}` : ''}
+				</p>
+			{/if}
+		</Module>
+
 		<Module title="Verification checks">
 			<ul class="space-y-3">
 				{#each data.checkDefs as def (def.id)}
@@ -301,6 +370,56 @@
 		</Module>
 	</div>
 
+	<Module title="Activity">
+		<div class="grid gap-4 lg:grid-cols-[1fr_auto]">
+			<div>
+				<p class="text-xs text-ink-3">
+					Alerts attributed to {data.site.hostname}
+					{#if data.aliases.length}
+						(or aliases: {data.aliases.join(', ')})
+					{/if}
+					— full history on
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+					<a href={resolve('/(app)/alerts') + `?site=${data.site.id}`} class="text-accent underline"
+						>Alerts</a
+					>.
+				</p>
+				{#if data.activity.recent.length}
+					<table class="mt-2 w-full text-left text-xs">
+						<thead class="text-ink-3">
+							<tr><th class="py-1">Scenario</th><th>Source</th><th>Started</th></tr>
+						</thead>
+						<tbody>
+							{#each data.activity.recent as r (r.upstreamId)}
+								<tr class="border-t border-rule">
+									<td class="py-1 pr-3 font-mono">{r.scenario ?? '—'}</td>
+									<td class="pr-3 font-mono">{r.sourceIp ?? '—'}</td>
+									<td class="text-ink-3">{fmt(r.startedAt)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				{:else}
+					<p class="mt-2 text-sm text-ink-3">
+						No alerts attributed yet — set aliases above and point this site's access log at
+						CrowdSec with the <code>target_fqdn</code> label.
+					</p>
+				{/if}
+			</div>
+			{#if data.activity.hours.length}
+				<div aria-label="Alert volume, last 7 days" role="img" class="flex items-end gap-px">
+					{#each data.activity.hours as h (h.hour)}
+						<div
+							class="w-1.5 bg-accent/70"
+							style:height="{Math.max(2, Math.round((h.total / trendMax) * 48))}px"
+							title="{new Date(h.hour).toLocaleString()}: {h.total} alerts"
+						></div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	</Module>
+
 	<Module title={data.agent ? 'Generated artifacts' : 'Generated artifacts — guided, not applied'}>
 		<p class="mb-3 text-xs text-ink-3">
 			{#if data.agent}
@@ -313,8 +432,14 @@
 			check promotes it to verified. Regenerating with different answers resets changed artifacts to not
 			applied.
 		</p>
+		{#if data.agent?.caps.files && data.canOperate}
+			<form method="post" action="?/checkDrift" class="mb-3">
+				<Button variant="secondary" size="sm" type="submit">Check drift via agent</Button>
+			</form>
+		{/if}
 		<div class="space-y-4">
 			{#each data.artifacts as a (a.id)}
+				{@const drift = driftOf(a)}
 				<div class="border border-rule">
 					<div
 						class="flex items-center justify-between gap-2 border-b border-rule bg-sheet px-3 py-2"
@@ -324,6 +449,9 @@
 						</p>
 						<div class="flex items-center gap-2">
 							<Stamp state={artifactState[a.state]} label={artifactLabel[a.state]} />
+							{#if drift}
+								<Stamp state={drift.state} label={drift.label} />
+							{/if}
 							{#if data.canOperate}
 								{#if a.kind === 'collections' && data.agent?.caps.cscli}
 									<form method="post" action="?/installCollections">

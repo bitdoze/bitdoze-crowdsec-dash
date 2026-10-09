@@ -1,0 +1,1 @@
+ALTER TABLE `site` ADD `appsec_exclusions` text;

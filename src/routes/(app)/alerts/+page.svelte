@@ -59,7 +59,44 @@
 				/>
 			</label>
 			<Button type="submit">Filter</Button>
+			<!-- eslint-disable svelte/no-navigation-without-resolve -->
+			<a
+				href={resolve('/(app)/alerts/export.csv') +
+					`?site=${data.filters.site}&scenario=${encodeURIComponent(data.filters.scenario)}&ip=${encodeURIComponent(data.filters.ip)}`}
+				class="rounded-[3px] border border-line px-3 py-1.5 text-xs text-ink-2 hover:bg-sheet"
+				>Export CSV</a
+			>
+			<!-- eslint-enable svelte/no-navigation-without-resolve -->
 		</form>
+
+		<div class="flex flex-wrap items-center gap-2">
+			{#each data.views as v (v.id)}
+				{@const q = new URLSearchParams(JSON.parse(v.params)).toString()}
+				<span class="inline-flex items-center gap-1 rounded-[3px] border border-line bg-sheet">
+					<!-- eslint-disable svelte/no-navigation-without-resolve -->
+					<a
+						href={resolve('/(app)/alerts') + (q ? `?${q}` : '')}
+						class="px-2 py-1 font-mono text-xs text-accent">{v.name}</a
+					>
+					<!-- eslint-enable svelte/no-navigation-without-resolve -->
+					<form method="post" action="?/deleteView" class="flex">
+						<input type="hidden" name="id" value={v.id} />
+						<button type="submit" class="pr-1.5 text-xs text-ink-3" title="Delete view">×</button>
+					</form>
+				</span>
+			{/each}
+			<form method="post" action="?/saveView" class="flex items-center gap-1.5">
+				<input type="hidden" name="f_site" value={data.filters.site} />
+				<input type="hidden" name="f_scenario" value={data.filters.scenario} />
+				<input type="hidden" name="f_ip" value={data.filters.ip} />
+				<input
+					name="name"
+					placeholder="Save these filters as…"
+					class="w-44 rounded-[3px] border border-line bg-sheet px-2 py-1 text-xs text-ink"
+				/>
+				<Button variant="secondary" size="sm" type="submit">Save view</Button>
+			</form>
+		</div>
 
 		<Module title="Alert log">
 			<div class="overflow-x-auto border border-rule bg-sheet">

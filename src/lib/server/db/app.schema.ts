@@ -59,6 +59,20 @@ export const site = sqliteTable('site', {
 		.notNull(),
 	/** Cloudflare sits in front (detected via cf-ray/cf-cache headers or set). */
 	cloudflare: integer('cloudflare', { mode: 'boolean' }).default(false).notNull(),
+	/** JSON array of alternate hostnames that attribute alerts to this site. */
+	aliases: text('aliases'),
+	/** WAF protection level 1–4 (spec 5.5); 'off' disables AppSec artifacts. */
+	wafLevel: text('waf_level', { enum: ['off', '1', '2', '3', '4'] })
+		.default('1')
+		.notNull(),
+	/** Remediation profile preset (spec 5.7): flat | escalating | captcha. */
+	remediationPreset: text('remediation_preset', {
+		enum: ['flat', 'escalating', 'captcha']
+	})
+		.default('escalating')
+		.notNull(),
+	/** JSON array of per-site AppSec exclusion collection names (spec 5.5). */
+	appsecExclusions: text('appsec_exclusions'),
 	/** JSON evidence from the last topology probe: {headers, probedUrl, at}. */
 	detection: text('detection'),
 	createdAt: integer('created_at', { mode: 'timestamp_ms' })
@@ -102,6 +116,9 @@ export const configArtifact = sqliteTable(
 		state: text('state', { enum: ['not_applied', 'applied', 'verified'] })
 			.default('not_applied')
 			.notNull(),
+		/** sha256 of the target file as last read by the agent (drift view). */
+		observedHash: text('observed_hash'),
+		observedAt: integer('observed_at', { mode: 'timestamp_ms' }),
 		createdAt: integer('created_at', { mode: 'timestamp_ms' })
 			.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
 			.notNull(),
@@ -451,4 +468,24 @@ export const jobStep = sqliteTable(
 		finishedAt: integer('finished_at', { mode: 'timestamp_ms' })
 	},
 	(table) => [index('job_step_job_idx').on(table.jobId, table.idx)]
+);
+
+/**
+ * A saved investigation view (spec 9 — saved searches): a named set of
+ * list-page filter params an operator can re-apply from a chip row.
+ */
+export const savedView = sqliteTable(
+	'saved_view',
+	{
+		id: text('id').primaryKey(),
+		/** Which list page the params apply to: alerts | decisions. */
+		page: text('page', { enum: ['alerts', 'decisions'] }).notNull(),
+		name: text('name').notNull(),
+		/** JSON-encoded URLSearchParams-like record of filter → value. */
+		params: text('params').notNull(),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' })
+			.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+			.notNull()
+	},
+	(table) => [index('savedView_page_idx').on(table.page)]
 );

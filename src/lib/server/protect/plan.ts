@@ -25,6 +25,13 @@ export function planInputFor(s: typeof site.$inferSelect, lapiUrl: string): Plan
 	} catch {
 		/* malformed detection JSON — ignore */
 	}
+	let appsecExclusions: string[] | undefined;
+	try {
+		const v = s.appsecExclusions ? (JSON.parse(s.appsecExclusions) as unknown) : [];
+		if (Array.isArray(v)) appsecExclusions = v.filter((x): x is string => typeof x === 'string');
+	} catch {
+		/* malformed JSON — treat as none */
+	}
 	return {
 		hostname: s.hostname,
 		proxy: s.proxy,
@@ -33,7 +40,10 @@ export function planInputFor(s: typeof site.$inferSelect, lapiUrl: string): Plan
 		lapiUrl,
 		logDir: '/var/log/proxy', // documented default; admins adjust paths
 		dynamicDir,
-		confDir
+		confDir,
+		wafLevel: s.wafLevel,
+		remediationPreset: s.remediationPreset,
+		appsecExclusions
 	};
 }
 

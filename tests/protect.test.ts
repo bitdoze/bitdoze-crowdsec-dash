@@ -12,7 +12,7 @@ import {
 	site,
 	syncState
 } from '#lib/server/db/app.schema.ts';
-import { generatePlan, TEST_SCENARIO } from '#lib/server/protect/templates.ts';
+import { driftHash, generatePlan, TEST_SCENARIO } from '#lib/server/protect/templates.ts';
 import { markTestWindow, runCheck, runSiteChecks } from '#lib/server/protect/checks.ts';
 import { regeneratePlan, markArtifact, listArtifacts } from '#lib/server/protect/plan.ts';
 import { eq } from 'drizzle-orm';
@@ -92,6 +92,59 @@ describe('generatePlan', () => {
 	it('returns a guidance artifact for unknown proxies', () => {
 		const arts = generatePlan({ ...input, proxy: 'unknown' });
 		expect(arts[0].content).toContain('set the site');
+	});
+
+	it('composes appsec configs per WAF level and omits the artifact when off', () => {
+		const appsecOf = (level: 'off' | '1' | '2' | '3' | '4') =>
+			generatePlan({ ...input, proxy: 'nginx', wafLevel: level }).find((a) => a.kind === 'appsec');
+		expect(appsecOf('1')!.content).toContain('crowdsecurity/virtual-patching');
+		expect(appsecOf('1')!.content).not.toContain('appsec-generic-rules');
+		expect(appsecOf('2')!.content).toContain('appsec-generic-rules');
+		expect(appsecOf('3')!.content).toContain('crowdsecurity/appsec-crs');
+		expect(appsecOf('3')!.content).not.toContain('appsec-crs-inband');
+		expect(appsecOf('4')!.content).toContain('appsec-crs-inband');
+		expect(appsecOf('off')).toBeUndefined();
+		// Level 'off' keeps detection artifacts — AppSec toggles independently.
+		const kinds = generatePlan({ ...input, proxy: 'nginx', wafLevel: 'off' }).map((a) => a.kind);
+		expect(kinds).toContain('acquisition');
+		expect(kinds).toContain('bouncer');
+	});
+
+	it('installs the level-matching collections and varies remediation presets', () => {
+		const l3 = generatePlan({ ...input, wafLevel: '3' }).find((a) => a.kind === 'collections')!;
+		expect(l3.content).toContain('appsec-generic-rules');
+		expect(l3.content).toContain('appsec-crs');
+		const flat = generatePlan({ ...input, remediationPreset: 'flat' }).find(
+			(a) => a.kind === 'remediation'
+		)!;
+		expect(flat.content).not.toContain('duration_expr');
+		const esc = generatePlan({ ...input, remediationPreset: 'escalating' }).find(
+			(a) => a.kind === 'remediation'
+		)!;
+		expect(esc.content).toContain('GetDecisionsCount');
+		const captcha = generatePlan({ ...input, remediationPreset: 'captcha' }).find(
+			(a) => a.kind === 'remediation'
+		)!;
+		expect(captcha.content).toContain('type: captcha');
+		expect(captcha.content).toContain('type: ban'); // fallback block stays
+	});
+
+	it('adds per-site AppSec exclusion collections to the install artifact', () => {
+		const c = generatePlan({
+			...input,
+			wafLevel: '2',
+			appsecExclusions: ['crowdsecurity/appsec-wordpress']
+		}).find((a) => a.kind === 'collections')!;
+		expect(c.content).toContain('cscli collections install crowdsecurity/appsec-wordpress');
+		const none = generatePlan({ ...input, wafLevel: '2' }).find((a) => a.kind === 'collections')!;
+		expect(none.content).not.toContain('wordpress');
+	});
+
+	it('driftHash treats a substituted bouncer key as in-sync', () => {
+		const desired = 'API_URL=http://crowdsec:8080\nAPI_KEY=<bouncer-key>\nlisten: 1\n';
+		const applied = 'API_URL=http://crowdsec:8080\nAPI_KEY=real-issued-key-xyz\nlisten: 1\n';
+		expect(driftHash(desired)).toBe(driftHash(applied));
+		expect(driftHash(applied)).not.toBe(driftHash(applied + '# edited\n'));
 	});
 });
 

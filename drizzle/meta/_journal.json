@@ -43,6 +43,20 @@
       "when": 1791562043603,
       "tag": "0005_bright_avengers",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791570253939,
+      "tag": "0006_public_zarek",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1791571929087,
+      "tag": "0007_empty_captain_midlands",
+      "breakpoints": true
     }
   ]
 }

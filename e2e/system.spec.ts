@@ -15,6 +15,7 @@ const SOCKET = '.e2e-data/agent.sock';
 const CALLS = '.e2e-data/agent-calls.log';
 const FILE_ROOT = '.e2e-data/agent-files';
 const PS_FIXTURE = '.e2e-data/ps.jsonl';
+const SIM_STATE = '.e2e-data/simulation-state.json';
 
 let agent: ChildProcess;
 
@@ -37,6 +38,7 @@ async function startAgent() {
 			AGENT_SERVICES: 'docker:crowdsec,docker:nginx,systemd:caddy',
 			AGENT_CALLS_LOG: CALLS,
 			DOCKER_PS_FIXTURE: PS_FIXTURE,
+			SIMULATION_STATE: SIM_STATE,
 			PATH: `${process.cwd()}/e2e/mock-bin:${process.env.PATH}`
 		},
 		stdio: 'ignore'
@@ -298,5 +300,118 @@ test.describe('with a live agent', () => {
 		await card2.getByRole('button', { name: 'Apply via agent' }).click();
 		await expect.poll(() => latestJob(host)).toBe('failed');
 		unlinkSync(flag);
+	});
+
+	test('phase 9: aliases attribute, WAF levels gate, drift + simulation controls', async ({
+		page
+	}) => {
+		const run = Date.now() % 100000;
+		const host = `e2e-p9-${run}.example.com`;
+		const alias = `api-p9-${run}.example.com`;
+		const confDir = join(process.cwd(), FILE_ROOT, 'p9confd');
+		const db = createClient({ url: 'file:.e2e-data/app.db' });
+		try {
+			unlinkSync(SIM_STATE);
+		} catch {
+			/* absent */
+		}
+
+		// Site + policy: alias, WAF level 3 (CRS observe).
+		await page.goto('/sites');
+		await page.getByLabel('Hostname').fill(host);
+		await page.getByRole('button', { name: 'Add site' }).click();
+		await page.getByRole('link', { name: host }).click();
+		await page.getByLabel('Proxy').selectOption('nginx');
+		await page.getByLabel('Runs').selectOption('docker');
+		await page.getByRole('button', { name: 'Save + regenerate' }).click();
+		await expect(page.getByRole('status').first()).toContainText('artifacts regenerated');
+
+		await page.getByLabel('Hostname aliases').fill(alias);
+		await page.getByLabel('WAF level').selectOption('3');
+		await page.getByRole('button', { name: 'Save policy' }).click();
+		await expect(page.getByRole('status').first()).toContainText('Policy saved');
+		// Level 3 appsec artifact: observe-only CRS, never in-band.
+		const appsec = page.locator('.border-rule', { hasText: 'AppSec service' }).first();
+		await expect(appsec).toContainText('crowdsecurity/appsec-crs');
+		await expect(appsec).not.toContainText('appsec-crs-inband');
+
+		// Level 4 is gated on observed CRS alerts — refused before any exist.
+		await page.getByLabel('WAF level').selectOption('4');
+		await page.getByRole('button', { name: 'Save policy' }).click();
+		await expect(page.getByRole('alert').or(page.getByRole('status'))).toContainText(
+			/level 3|No CRS alerts/i
+		);
+
+		// Inject an AppSec alert attributed via the ALIAS — proves alias
+		// attribution and produces the observe evidence the gate needs.
+		const res = await page.request.post('http://127.0.0.1:8090/_inject', {
+			data: { scenario: 'crowdsecurity/appsec-crs-942110', fqdn: alias }
+		});
+		expect(res.ok()).toBeTruthy();
+		const siteRow = await db.execute({
+			sql: 'SELECT id FROM site WHERE hostname = ?',
+			args: [host]
+		});
+		const siteId = siteRow.rows[0]!.id as string;
+		await expect
+			.poll(
+				async () =>
+					(
+						await db.execute({
+							sql: 'SELECT COUNT(*) n FROM alert_site WHERE site_id = ?',
+							args: [siteId]
+						})
+					).rows[0]!.n,
+				{ timeout: 15000 }
+			)
+			.toBeGreaterThan(0);
+		// The site activity module surfaces it (still on the site page — reload).
+		await page.reload();
+		await expect(page.getByText('appsec-crs-942110')).toBeVisible();
+
+		// Now the level-4 save goes through — observe-first flow complete.
+		await page.getByLabel('WAF level').selectOption('4');
+		await page.getByRole('button', { name: 'Save policy' }).click();
+		await expect(page.getByRole('status').first()).toContainText('Policy saved');
+		await expect(page.locator('.border-rule', { hasText: 'AppSec service' }).first()).toContainText(
+			'appsec-crs-inband'
+		);
+
+		// Drift: adopt + managed apply of the conf.d file, then observe.
+		await page.getByLabel('Managed config dir').fill(confDir);
+		await page.getByRole('button', { name: 'Adopt nginx for managed config' }).click();
+		await expect(page.getByRole('status').first()).toContainText('Adopted nginx');
+		const card = page.locator('.border-rule', { hasText: 'conf.d' }).first();
+		await card.getByRole('button', { name: 'Apply via agent' }).click();
+		await expect(page.getByRole('status').first()).toContainText('Queued managed apply');
+		await expect
+			.poll(async () => {
+				const r = await db.execute({
+					sql: "SELECT state FROM job WHERE site_id = ? AND kind = 'config.apply' ORDER BY created_at DESC LIMIT 1",
+					args: [siteId]
+				});
+				return r.rows[0]?.state;
+			})
+			.toBe('succeeded');
+		await page.getByRole('button', { name: 'Check drift via agent' }).click();
+		await expect(page.getByRole('status').first()).toContainText('all in sync');
+		await expect(page.getByText('in sync').first()).toBeVisible();
+		// Hand-edit the managed file → drift shows honestly.
+		writeFileSync(join(confDir, 'crowdsec-bouncer.conf'), '# tampered by an operator\n');
+		await page.getByRole('button', { name: 'Check drift via agent' }).click();
+		await expect(page.getByRole('status').first()).toContainText('drifted');
+		await expect(page.getByText('drifted').first()).toBeVisible();
+
+		// Simulation toggle: per-scenario through the hub items on /system.
+		await page.goto('/system');
+		await expect(page.getByText('crowdsecurity/http-crawl-non_statics')).toBeVisible();
+		await page
+			.locator('span', { hasText: 'crowdsecurity/http-crawl-non_statics' })
+			.getByRole('button', { name: 'simulate' })
+			.click();
+		await expect(page.getByRole('status').first()).toContainText('Queued simulation enable');
+		await expect
+			.poll(() => calls().includes('cscli simulation enable crowdsecurity/http-crawl-non_statics'))
+			.toBe(true);
 	});
 });

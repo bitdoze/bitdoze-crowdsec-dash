@@ -101,6 +101,16 @@ test('allowlist-my-IP returns guided commands (no LAPI write path)', async ({ pa
 });
 
 test('notification channel: SSRF rejection, real delivery, inbox row', async ({ page }) => {
+	// `.e2e-data` persists: stale channels + outbox backlog would starve the
+	// new delivery (dispatchOutbox takes the 20 oldest pending rows) and make
+	// the channel-row selectors ambiguous.
+	const c = createClient({ url: 'file:.e2e-data/app.db' });
+	try {
+		await c.execute('DELETE FROM notification_outbox');
+		await c.execute('DELETE FROM notification_channel');
+	} finally {
+		c.close();
+	}
 	await page.goto('/settings/notifications');
 
 	// Loopback must be rejected at save time.
@@ -115,7 +125,6 @@ test('notification channel: SSRF rejection, real delivery, inbox row', async ({ 
 	await page.getByRole('button', { name: 'Save channel' }).click();
 	await expect(page.getByRole('status').first()).toContainText('saved');
 
-	// `.e2e-data` persists — the channel may exist from a previous run.
 	const channelRow = page.locator('[data-channel]').filter({ hasText: 'e2e hook webhook' }).first();
 	await expect(channelRow).toBeVisible();
 	await channelRow.getByRole('button', { name: 'Send test' }).click();
@@ -125,7 +134,6 @@ test('notification channel: SSRF rejection, real delivery, inbox row', async ({ 
 	await page.goto('/notifications');
 	const notifRow = page.locator('div.border-b', { hasText: 'Test delivery to e2e hook' }).first();
 	await expect(notifRow).toBeVisible();
-	// Duplicate "e2e hook" channels from earlier runs each get a delivery.
 	await expect(notifRow.getByText(/delivered: [1-9]/)).toBeVisible();
 
 	// Mark-all-read works.

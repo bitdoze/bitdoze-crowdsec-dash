@@ -5,6 +5,7 @@
  * verification check passes.
  */
 import { createHash } from 'node:crypto';
+import { WAF_LEVELS } from '#lib/sites.ts';
 
 export type ProxyKind = 'caddy' | 'traefik' | 'nginx' | 'other' | 'unknown';
 export type Runtime = 'native' | 'docker' | 'unknown';
@@ -29,6 +30,19 @@ export type PlanInput = {
 	 * /etc/nginx/conf.d. Stored per-site after adoption/discovery.
 	 */
 	confDir?: string;
+	/**
+	 * WAF protection level 1–4 from spec §5.5; 'off' omits the AppSec
+	 * artifact entirely. Defaults to '1' (virtual patching only).
+	 */
+	wafLevel?: 'off' | '1' | '2' | '3' | '4';
+	/** Remediation profile preset (spec §5.7). Defaults to 'escalating'. */
+	remediationPreset?: 'flat' | 'escalating' | 'captcha';
+	/**
+	 * Per-site AppSec exclusion collections (e.g. crowdsecurity/appsec-wordpress)
+	 * — installed alongside the level collections so app-specific false
+	 * positives are tuned out. Validated against the hub item name shape.
+	 */
+	appsecExclusions?: string[];
 };
 
 export type Artifact = {
@@ -54,6 +68,22 @@ export const APPSEC_TEST_RULE = 'crowdsecurity/appsec-generic-test';
 
 export function artifactHash(content: string): string {
 	return createHash('sha256').update(content).digest('hex').slice(0, 12);
+}
+
+/**
+ * Desired-vs-observed drift hash. The desired content may carry a
+ * `<bouncer-key>` placeholder while the applied file holds the issued key —
+ * both sides normalize credential values to a marker so a substituted key
+ * doesn't count as drift (its value is never stored or compared).
+ */
+const KEY_VALUE =
+	/(<bouncer-key>|API_KEY=\S+|api_key\s+\S+|api_key:\s*\S+|crowdsec_lapi_key\s*=\s*\S+)/g;
+
+export function driftHash(content: string): string {
+	return createHash('sha256')
+		.update(content.replace(KEY_VALUE, '<key>'))
+		.digest('hex')
+		.slice(0, 12);
 }
 
 /** CrowdSec acquis snippet for a file source, docker source, or journald. */
@@ -103,21 +133,99 @@ function collections(input: PlanInput): Artifact {
 cscli collections install ${proxyCollection}
 cscli collections install crowdsecurity/base-http-scenarios
 cscli parsers install crowdsecurity/http-logs
-# Enables richer event context (target_fqdn) used for site attribution:
+${wafCollections(input.wafLevel)}${exclusionCollections(input.appsecExclusions)}# Enables richer event context (target_fqdn) used for site attribution:
 cscli hub update && cscli collections upgrade crowdsecurity/${input.proxy === 'unknown' ? 'base-http-scenarios' : input.proxy === 'other' ? 'base-http-scenarios' : input.proxy}
 sudo systemctl reload crowdsec  # or: docker restart crowdsec
 `
 	};
 }
 
-function remediation(): Artifact {
-	return {
-		kind: 'remediation',
-		title: 'Remediation profile preset (profiles.yaml)',
-		format: 'yaml',
-		content: `# /etc/crowdsec/profiles.yaml — managed block. Merges with, never
-# replaces, your existing profiles. First detection: 4h ban; each repeat
-# adds 4h (escalating). Keep the default block last.
+/**
+ * AppSec configs per WAF level (spec §5.5). Level 3 runs CRS out-of-band —
+ * matches surface as alerts without blocking, which is the gate evidence a
+ * site needs before moving to level 4 (in-band CRS).
+ */
+export const WAF_CONFIGS: Record<'1' | '2' | '3' | '4', string[]> = {
+	'1': ['crowdsecurity/appsec-default', 'crowdsecurity/virtual-patching'],
+	'2': [
+		'crowdsecurity/appsec-default',
+		'crowdsecurity/virtual-patching',
+		'crowdsecurity/appsec-generic-rules'
+	],
+	'3': [
+		'crowdsecurity/appsec-default',
+		'crowdsecurity/virtual-patching',
+		'crowdsecurity/appsec-generic-rules',
+		'crowdsecurity/appsec-crs'
+	],
+	'4': [
+		'crowdsecurity/appsec-default',
+		'crowdsecurity/virtual-patching',
+		'crowdsecurity/appsec-generic-rules',
+		'crowdsecurity/appsec-crs-inband'
+	]
+};
+
+/** Extra `cscli collections install` lines the level needs. */
+function wafCollections(level: PlanInput['wafLevel']): string {
+	if (!level || level === 'off' || level === '1') return '';
+	const items =
+		level === '2'
+			? ['crowdsecurity/appsec-generic-rules']
+			: level === '3'
+				? ['crowdsecurity/appsec-generic-rules', 'crowdsecurity/appsec-crs']
+				: ['crowdsecurity/appsec-generic-rules', 'crowdsecurity/appsec-crs-inband'];
+	return items.map((i) => `cscli collections install ${i}`).join('\n') + '\n';
+}
+
+/** Per-site exclusion collections — app-specific false-positive tuning. */
+function exclusionCollections(items: string[] | undefined): string {
+	if (!items?.length) return '';
+	return items.map((i) => `cscli collections install ${i}`).join('\n') + '\n';
+}
+
+function appsecConfigYaml(input: PlanInput): string {
+	const level = input.wafLevel === 'off' ? '1' : (input.wafLevel ?? '1');
+	return WAF_CONFIGS[level].map((c) => `  - ${c}`).join('\n');
+}
+
+function remediation(input: PlanInput): Artifact {
+	const preset = input.remediationPreset ?? 'escalating';
+	const blocks: Record<string, { title: string; yaml: string }> = {
+		flat: {
+			title: 'Remediation profile — flat 4h bans',
+			yaml: `name: dashboard_default_ip_remediation
+filters:
+  - Alert.Remediation == true && Alert.GetScope() == "Ip"
+decisions:
+  - type: ban
+    duration: 4h
+on_success: break`
+		},
+		escalating: {
+			title: 'Remediation profile — escalating bans for repeat offenders',
+			yaml: `name: dashboard_default_ip_remediation
+filters:
+  - Alert.Remediation == true && Alert.GetScope() == "Ip"
+decisions:
+  - type: ban
+    duration: 4h
+    duration_expr: Sprintf('%dh', (GetDecisionsCount(Alert.GetValue()) + 1) * 4)
+on_success: break`
+		},
+		captcha: {
+			title: 'Remediation profile — captcha for low-confidence scenarios',
+			yaml: `# Low-confidence probing scenarios challenge instead of banning —
+# requires bouncers that support captcha remediation.
+name: dashboard_captcha_ip_remediation
+filters:
+  - Alert.Remediation == true && Alert.GetScope() == "Ip" &&
+    Alert.GetScenario() in ["crowdsecurity/http-probing", "crowdsecurity/http-scan"]
+decisions:
+  - type: captcha
+    duration: 4h
+on_success: break
+# Everything else still gets the escalating ban.
 name: dashboard_default_ip_remediation
 filters:
   - Alert.Remediation == true && Alert.GetScope() == "Ip"
@@ -125,7 +233,17 @@ decisions:
   - type: ban
     duration: 4h
     duration_expr: Sprintf('%dh', (GetDecisionsCount(Alert.GetValue()) + 1) * 4)
-on_success: break
+on_success: break`
+		}
+	};
+	const b = blocks[preset] ?? blocks.escalating;
+	return {
+		kind: 'remediation',
+		title: `${b.title} (profiles.yaml)`,
+		format: 'yaml',
+		content: `# /etc/crowdsec/profiles.yaml — managed block. Merges with, never
+# replaces, your existing profiles. Keep the default block last.
+${b.yaml}
 `
 	};
 }
@@ -193,9 +311,9 @@ crowdsec {
 		title: 'AppSec component + forwarding',
 		format: 'yaml',
 		content: `# /etc/crowdsec/appsec.yaml — virtualhost-based AppSec (WAF) service.
+# WAF level ${input.wafLevel === 'off' ? '1' : (input.wafLevel ?? '1')} — ${WAF_LEVELS.find((l) => l.value === (input.wafLevel === 'off' ? '1' : (input.wafLevel ?? '1')))?.label}.
 appsec_configs:
-  - crowdsecurity/appsec-default
-  - crowdsecurity/virtual-patching
+${appsecConfigYaml(input)}
 listen_addr: 0.0.0.0:7422
 # Then uncomment appsec_url in the bouncer snippet so Caddy forwards
 # requests for inspection before serving them.
@@ -232,7 +350,7 @@ listen_addr: 0.0.0.0:7422
 		appsec,
 		acquisition(input),
 		collections(input),
-		remediation(),
+		remediation(input),
 		...(compose ? [compose] : [])
 	];
 }
@@ -315,10 +433,9 @@ http:
 		kind: 'appsec',
 		title: 'AppSec acquisition + forwarding',
 		format: 'yaml',
-		content: `# /etc/crowdsec/appsec.yaml
+		content: `# /etc/crowdsec/appsec.yaml — WAF level ${input.wafLevel === 'off' ? '1' : (input.wafLevel ?? '1')}.
 appsec_configs:
-  - crowdsecurity/appsec-default
-  - crowdsecurity/virtual-patching
+${appsecConfigYaml(input)}
 listen_addr: 0.0.0.0:7422
 # Then set crowdsecAppsecEnabled: true and crowdsecAppsecHost in the
 # middleware so Traefik forwards requests for inspection.
@@ -349,7 +466,7 @@ listen_addr: 0.0.0.0:7422
 		appsec,
 		acquisition(input),
 		collections(input),
-		remediation(),
+		remediation(input),
 		...(compose ? [compose] : []),
 		...(demo ? [demo] : [])
 	];
@@ -494,10 +611,9 @@ API_KEY=<bouncer-key>   # issued by the managed apply job
 		kind: 'appsec',
 		title: 'AppSec service for nginx bouncer',
 		format: 'yaml',
-		content: `# /etc/crowdsec/appsec.yaml
+		content: `# /etc/crowdsec/appsec.yaml — WAF level ${input.wafLevel === 'off' ? '1' : (input.wafLevel ?? '1')}.
 appsec_configs:
-  - crowdsecurity/appsec-default
-  - crowdsecurity/virtual-patching
+${appsecConfigYaml(input)}
 listen_addr: 127.0.0.1:7422
 # Then set APPSEC_URL in the bouncer config above and reload nginx.
 `
@@ -527,7 +643,7 @@ listen_addr: 127.0.0.1:7422
 		appsec,
 		acquisition(input),
 		collections(input),
-		remediation(),
+		remediation(input),
 		...(compose ? [compose] : [])
 	];
 }
@@ -538,21 +654,28 @@ listen_addr: 127.0.0.1:7422
  * artifact explaining which proxy answers are needed.
  */
 export function generatePlan(input: PlanInput): Artifact[] {
-	if (input.proxy === 'caddy') return caddy(input);
-	if (input.proxy === 'traefik') return traefik(input);
-	if (input.proxy === 'nginx') return nginx(input);
-	return [
-		{
-			kind: 'access_log',
-			title: 'Tell us what fronts this site',
-			format: 'shell',
-			content: `# No artifacts generated — set the site's proxy (Caddy, Traefik, or
+	const arts =
+		input.proxy === 'caddy'
+			? caddy(input)
+			: input.proxy === 'traefik'
+				? traefik(input)
+				: input.proxy === 'nginx'
+					? nginx(input)
+					: [
+							{
+								kind: 'access_log' as const,
+								title: 'Tell us what fronts this site',
+								format: 'shell' as const,
+								content: `# No artifacts generated — set the site's proxy (Caddy, Traefik, or
 # Nginx) on the site page or run Detect topology. Detection reads the
 # public response headers, or you can answer directly.
 `
-		},
-		acquisition(input),
-		collections(input),
-		remediation()
-	];
+							},
+							acquisition(input),
+							collections(input),
+							remediation(input)
+						];
+	// WAF level 'off' — no AppSec artifact at all (spec §5.5: AppSec is
+	// toggled independently of log detection).
+	return input.wafLevel === 'off' ? arts.filter((a) => a.kind !== 'appsec') : arts;
 }

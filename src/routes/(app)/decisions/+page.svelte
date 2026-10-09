@@ -188,6 +188,14 @@
 				Include expired
 			</label>
 			<Button type="submit">Filter</Button>
+			<!-- eslint-disable svelte/no-navigation-without-resolve -->
+			<a
+				href={resolve('/(app)/decisions/export.csv') +
+					`?q=${encodeURIComponent(data.filters.q)}${data.filters.expired ? '&expired=1' : ''}`}
+				class="rounded-[3px] border border-line px-3 py-1.5 text-xs text-ink-2 hover:bg-sheet"
+				>Export CSV</a
+			>
+			<!-- eslint-enable svelte/no-navigation-without-resolve -->
 		</form>
 
 		<Module title="Decision log">

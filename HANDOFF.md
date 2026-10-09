@@ -154,6 +154,21 @@ Verified: `check` 0/0, lint clean, `npm test` 162, `npm run build`, `e2e/system.
 
 **Not yet:** the two-sites/real-traffic/IPv6/WAF acceptance gate needs real hosts; distro package installs (`apt install libnginx-mod-http-lua`) stay guided deliberately — the agent never installs packages.
 
+## Phase 9 (website operations + policy UX) — core done, on `main`
+
+- **Site policy model (migration 0006–0007):** `site.aliases` (JSON array), `wafLevel` (`off`|`1`–`4`, default `1`), `remediationPreset` (`flat`|`escalating`|`captcha`, default `escalating`), `appsecExclusions` (JSON array of hub collection names), `config_artifact.observedHash`/`observedAt`, `saved_view` table.
+- **Alias-aware attribution:** `siteIndex` returns `byName` + `ambiguous` — primary hostnames win over other sites' claimed aliases, a name claimed by two sites maps to neither (alert stays unattributed, no learned site minted), `setPolicy` validates aliases (`validateAliases`) and refuses names already owned/aliased elsewhere.
+- **WAF levels (spec §5.5):** `WAF_CONFIGS` composes AppSec configs per level; `off` omits the AppSec artifact but keeps detection/bouncer artifacts; level 3 installs `appsec-crs` (out-of-band — alerts without blocking) and level 4 installs `appsec-crs-inband`, gated in `setPolicy` on observed `crowdsecurity/appsec-%` alerts for the site. Per-site exclusion collections render as extra `cscli collections install` lines (`validateCollections` — `author/name` shape).
+- **Remediation presets (spec §5.7):** distinct `profiles.yaml` content per preset — flat fixed 4h, escalating `duration_expr` on `GetDecisionsCount`, captcha for low-confidence scenarios with a ban fallback.
+- **Drift:** `driftHash` normalizes `<bouncer-key>`/`API_KEY=` values so key substitution never counts as drift; `checkDrift` reads each managed artifact's target via agent `file.read` and stamps `observedHash`/`observedAt`; artifact cards show `in sync`/`drifted` badges + the timestamp.
+- **Investigation UX:** site Activity module (recent attributed alerts + hourly rollup); `/alerts` saved views (`saved_view` — save/reapply chips/delete, audited) plus `Export CSV` honoring `site`/`scenario`/`ip`; `/decisions` `Export CSV` honoring `q`/`expired` — still server-wide by design.
+- **`/system`:** typed hub inventory (collections/parsers/scenarios), simulation status normalized across `cscli` payload shapes, and durable `simulation.set` jobs — global toggle + per-scenario `simulate`/`un-sim` (idempotency `sim:<scope>:<enabled>`, lock `simulation`). Mock `cscli` grew scenario items + a `SIMULATION_STATE` file so status reflects toggles.
+- **Tests:** alias attribution/ambiguity units, WAF-level content + collections + remediation + `driftHash` units, CSV encoder units, one e2e covering alias-attributed AppSec alert → L3→L4 gate → managed apply → drift in-sync → tamper → drifted → scenario simulation toggle.
+
+Verified: `check` 0/0, lint clean, `npm test` 173, `npm run build`, full e2e 41+1 phase-9 test green.
+
+**Not yet:** chart accessibility/legends/downsampling and the setup-recovery/keyboard polish bucket stay open on the checklist (no charting components exist yet — Activity renders a text rollup). Captcha remediation needs bouncers that answer captcha — flagged capability-gated in the artifact.
+
 ## Actions only the owner can take
 
 1. GitHub → Settings → Actions → General → enable **"Allow GitHub Actions to create and approve pull requests"**. Release-please fails without it (latest Release run: "GitHub Actions is not permitted to create or approve pull requests").
@@ -167,11 +182,11 @@ Verified: `check` 0/0, lint clean, `npm test` 162, `npm run build`, `e2e/system.
 
 - All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 
-### 2. Real-host validation for phases 7–8, then Phase 9 (v0.7.0): website operations + policy UX
+### 2. Real-host validation for phases 7–8, then Phase 10 (v0.8.0): Cloudflare edge integration
 
-Phases 7–8 are on `main` with stub-driven e2e; real validation needs a Docker host with the agent (`AGENT_DOCKER=1`, `AGENT_SERVICES` including the proxy targets): deploy the demo compose, run adopt→apply→validate→reload per proxy, exercise bypass/recreation/failure paths. Phase 9 then builds site ops on top: WAF protection levels with per-site exclusions + observe-before-block, remediation profile presets, site dashboards + filters + exports, rule/collection inventory, drift views.
+Phases 7–9 are on `main` with stub-driven e2e; real validation needs a Docker host with the agent (`AGENT_DOCKER=1`, `AGENT_SERVICES` including the proxy targets): deploy the demo compose, run adopt→apply→validate→reload per proxy, exercise bypass/recreation/failure paths, then walk a site through WAF levels 3→4 against real CRS alerts. Phase 10 adds the Cloudflare Free-plan edge mode (token validation, zone discovery, IP list + custom rule, serialized writes, ownership-safe uninstall).
 
-Later phases (9–13) are fully described in the spec.
+Later phases (10–13) are fully described in the spec.
 
 ## Gotchas already learned
 
@@ -198,9 +213,10 @@ Later phases (9–13) are fully described in the spec.
 - **Worker outage/recovery:** read `sync_state.lastError` _before_ running the operation — a successful sync clears it, so reading after always misses the recovery.
 - **SSR state across param navigation:** SvelteKit keeps `form` populated when only the route param changes — scope lookup results (`form.x.ip === data.ip`) or IP B shows IP A's answer.
 - **E2E `.e2e-data` persists between runs:** tests must be rerunnable — disconnect first when connected, randomize pushed IPs, and clear worker-produced notification keys before asserting outages or old rows create false positives. `SYNC_INTERVAL_MS` shortens the worker tick; mock kills/restarts happen via `/_down`.
-- **`svelte/no-navigation-without-resolve`:** `resolve()` is per-route overloaded, so a union `RouteId` won't type-check. For server-generated arbitrary internal hrefs (notification links), a scoped `eslint-disable-next-line` on a plain `href` is the honest option.
+- **`svelte/no-navigation-without-resolve`:** `resolve()` is per-route overloaded, so a union `RouteId` won't type-check. For server-generated internal hrefs (notification links, resolved-route + appended query strings), a scoped eslint-disable on a plain `href` is the honest option — but it's an _ESLint_ rule reported on the `href=` line: `svelte-ignore` can't suppress it ("not a recognised code") and `eslint-disable-next-line` only works for single-line anchors; multi-line tags need an `eslint-disable`/`eslint-enable` range.
 - **Server-only modules in components:** don't import anything from `#lib/server/*` into `.svelte` files — even `import type` can drag server code into the client graph. Shared shapes go in `src/lib/` (e.g. `notify-channels.ts`) and get re-exported server-side.
 - **Dependency age rule:** pin versions ≥7 days old — `nodemailer@^10.0.13`, not the 2-day-old 10.0.16.
+- **Outbox backlog starvation:** `dispatchOutbox` takes the 20 _oldest_ pending rows — a persistent `.e2e-data` outbox backlog starves fresh test deliveries (`pending`, no `lastError` → "delivery not attempted"). Purge `notification_outbox`/`notification_channel` in the test before asserting.
 
 ## How to track progress
 

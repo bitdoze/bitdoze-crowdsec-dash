@@ -159,11 +159,53 @@
 			{#if data.tierDError}
 				<p class="text-sm text-degraded">—</p>
 			{:else}
-				<p class="mb-2 text-xs text-ink-3">{data.hubCount} installed items.</p>
+				<div class="mb-2 flex flex-wrap items-center gap-2 text-xs text-ink-3">
+					{data.hubCount} installed items · simulation:
+					{#if data.simulation.global === null}
+						unknown
+					{:else}
+						<span class="font-mono">{data.simulation.global ? 'enabled' : 'disabled'}</span>
+					{/if}
+					{#if data.canOperate && data.simulation.global !== null}
+						<form method="post" action="?/simulate" class="inline">
+							<input type="hidden" name="enabled" value={data.simulation.global ? '0' : '1'} />
+							<button type="submit" class="text-accent underline">
+								{data.simulation.global ? 'disable globally' : 'enable globally'}
+							</button>
+						</form>
+					{/if}
+				</div>
 				<div class="flex flex-wrap gap-1.5">
 					{#each data.hubItems as item (kv(item, ['name']))}
-						<span class="bg-paper-2 rounded-sm border border-rule px-2 py-0.5 font-mono text-xs">
-							{kv(item, ['name'])}
+						{@const nm = kv(item, ['name'])}
+						{@const type = kv(item, ['type'])}
+						<span
+							class="bg-paper-2 inline-flex items-center gap-1.5 rounded-sm border border-rule px-2 py-0.5 font-mono text-xs"
+						>
+							{#if type !== '—'}<span class="text-ink-3">{type.replace(/s$/, '')}</span>{/if}
+							{nm}
+							{#if data.simulation.items[nm]}
+								<span class="text-degraded">sim</span>
+							{/if}
+							{#if (type === 'scenarios' || type === 'scenario') && data.canOperate}
+								<form method="post" action="?/simulate" class="inline">
+									<input type="hidden" name="scope" value={nm} />
+									<input
+										type="hidden"
+										name="enabled"
+										value={data.simulation.items[nm] ? '0' : '1'}
+									/>
+									<button
+										type="submit"
+										class="text-accent underline"
+										title={data.simulation.items[nm]
+											? 'Stop simulating — scenario bans again'
+											: 'Simulate — alerts without decisions'}
+									>
+										{data.simulation.items[nm] ? 'un-sim' : 'simulate'}
+									</button>
+								</form>
+							{/if}
 						</span>
 					{:else}
 						<span class="text-sm text-ink-3">No hub items installed.</span>
