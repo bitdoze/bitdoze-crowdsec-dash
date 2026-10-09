@@ -204,7 +204,7 @@
 						type="password"
 						required
 						autocomplete="off"
-						hint="Scoped to one account — never a global API key."
+						hint="Scoped to one account — never a global API key. Needs Zone:Read, Account:Account Filter Lists:Edit, and Zone:Zone WAF:Edit."
 					/>
 					<div><Button type="submit">Verify and connect</Button></div>
 				</form>

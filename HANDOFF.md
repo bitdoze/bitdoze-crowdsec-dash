@@ -181,7 +181,9 @@ Verified: `check` 0/0, lint clean, `npm test` 177, `npm run build`, full e2e 42+
 
 Verified: `check` 0/0, `npm test` 190, build, `e2e/edge.spec.ts` green incl. CF-side rule-expression assertions and the bad-token path.
 
-**Not yet:** Worker-bouncer mode (documented only), observe-only rule action, per-route mapping, real-account validation (token revocation, quota, propagation).
+**Not yet:** Worker-bouncer mode (documented only), observe-only rule action, per-route mapping, full real-account lifecycle (token revocation, quota, propagation, adopt-existing-list).
+
+**Partially real-validated** (owner's `CLOUDFLARE_API_TOKEN` wrangler deploy token against their 23-zone account): token verify, zone discovery + plan detection at scale (23 zones, Free vs Pro correct), and the denied-permission path — `GET /accounts/{id}/rules/lists` and the zone custom-rules entrypoint both return CF code 10000, surfaced honestly as TOKEN ERROR + persisted `lastError`, account stays connected, zero writes reached the real account. Remaining gap is a token scoped `Zone:Read` + `Account:Account Filter Lists:Edit` + `Zone:Zone WAF:Edit` on a test zone to run list create → rule → sync → propagation → uninstall for real.
 
 ## Actions only the owner can take
 
