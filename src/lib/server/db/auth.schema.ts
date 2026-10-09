@@ -17,7 +17,8 @@ export const user = sqliteTable('user', {
 	role: text('role'),
 	banned: integer('banned', { mode: 'boolean' }).default(false),
 	banReason: text('ban_reason'),
-	banExpires: integer('ban_expires', { mode: 'timestamp_ms' })
+	banExpires: integer('ban_expires', { mode: 'timestamp_ms' }),
+	twoFactorEnabled: integer('two_factor_enabled', { mode: 'boolean' }).default(false)
 });
 
 export const session = sqliteTable(
@@ -90,6 +91,25 @@ export const verification = sqliteTable(
 	(table) => [index('verification_identifier_idx').on(table.identifier)]
 );
 
+export const twoFactor = sqliteTable(
+	'two_factor',
+	{
+		id: text('id').primaryKey(),
+		secret: text('secret').notNull(),
+		backupCodes: text('backup_codes').notNull(),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		verified: integer('verified', { mode: 'boolean' }).default(true),
+		failedVerificationCount: integer('failed_verification_count').default(0),
+		lockedUntil: integer('locked_until', { mode: 'timestamp_ms' })
+	},
+	(table) => [
+		index('twoFactor_secret_idx').on(table.secret),
+		index('twoFactor_userId_idx').on(table.userId)
+	]
+);
+
 export const rateLimit = sqliteTable('rate_limit', {
 	id: text('id').primaryKey(),
 	key: text('key').notNull().unique(),
@@ -99,7 +119,8 @@ export const rateLimit = sqliteTable('rate_limit', {
 
 export const userRelations = relations(user, ({ many }) => ({
 	sessions: many(session),
-	accounts: many(account)
+	accounts: many(account),
+	twoFactors: many(twoFactor)
 }));
 
 export const sessionRelations = relations(session, ({ one }) => ({
@@ -112,6 +133,13 @@ export const sessionRelations = relations(session, ({ one }) => ({
 export const accountRelations = relations(account, ({ one }) => ({
 	user: one(user, {
 		fields: [account.userId],
+		references: [user.id]
+	})
+}));
+
+export const twoFactorRelations = relations(twoFactor, ({ one }) => ({
+	user: one(user, {
+		fields: [twoFactor.userId],
 		references: [user.id]
 	})
 }));

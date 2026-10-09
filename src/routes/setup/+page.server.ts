@@ -5,6 +5,7 @@ import { APIError } from 'better-auth/api';
 import { auth, endSetup, setupToken } from '#lib/server/auth.ts';
 import { db } from '#lib/server/db/index.ts';
 import { user } from '#lib/server/db/auth.schema.ts';
+import { recordAudit } from '#lib/server/audit.ts';
 
 const MIN_PASSWORD_LENGTH = 12;
 
@@ -42,16 +43,26 @@ export const actions: Actions = {
 		if (attempt === 'too_many') error(429, 'Too many failed attempts');
 		if (attempt === 'invalid') return fail(400, { message: 'Invalid setup token' });
 
+		let adminId: string | undefined;
 		try {
 			// Server-side call without request headers: the admin plugin's internal
 			// path, unaffected by disabled public sign-up.
-			await auth.api.createUser({ body: { email, name, password, role: 'admin' } });
+			const created = await auth.api.createUser({
+				body: { email, name, password, role: 'admin' }
+			});
+			adminId = created.user.id;
 		} catch (e) {
 			setupToken.release();
 			if (e instanceof APIError) return fail(400, { message: e.message });
 			throw e;
 		}
 
+		await recordAudit({
+			event,
+			subject: adminId ?? null,
+			action: 'setup.admin_created',
+			detail: { email }
+		});
 		endSetup();
 
 		try {

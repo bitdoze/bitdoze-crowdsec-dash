@@ -37,16 +37,28 @@
 		isMac = /mac/i.test(navigator.platform);
 	});
 
-	const nav = [
-		{ id: 'overview', label: 'Overview', icon: LayoutDashboard, planned: false },
-		{ id: 'sites', label: 'Sites', icon: Globe, planned: true },
-		{ id: 'alerts', label: 'Alerts', icon: Siren, planned: true },
-		{ id: 'decisions', label: 'Decisions', icon: Ban, planned: true },
-		{ id: 'protection', label: 'Protection', icon: ShieldCheck, planned: true },
-		{ id: 'notifications', label: 'Notifications', icon: Bell, planned: true },
-		{ id: 'system', label: 'System', icon: Activity, planned: true },
-		{ id: 'settings', label: 'Settings', icon: Settings, planned: true }
-	];
+	const nav = $derived([
+		{
+			id: 'overview',
+			label: 'Overview',
+			icon: LayoutDashboard,
+			href: resolve('/(app)'),
+			active: page.url.pathname === '/'
+		},
+		{ id: 'sites', label: 'Sites', icon: Globe, planned: true as const },
+		{ id: 'alerts', label: 'Alerts', icon: Siren, planned: true as const },
+		{ id: 'decisions', label: 'Decisions', icon: Ban, planned: true as const },
+		{ id: 'protection', label: 'Protection', icon: ShieldCheck, planned: true as const },
+		{ id: 'notifications', label: 'Notifications', icon: Bell, planned: true as const },
+		{ id: 'system', label: 'System', icon: Activity, planned: true as const },
+		{
+			id: 'settings',
+			label: 'Settings',
+			icon: Settings,
+			href: resolve('/(app)/settings'),
+			active: page.url.pathname.startsWith('/settings')
+		}
+	]);
 
 	function updateParams(changes: Record<string, string | null>) {
 		const params = new SvelteURLSearchParams(page.url.search);
@@ -77,6 +89,7 @@
 
 	const paletteItems: PaletteItem[] = $derived([
 		{ id: 'go-overview', label: 'Go to Overview', action: () => goto(resolve('/(app)')) },
+		{ id: 'go-settings', label: 'Go to Settings', action: () => goto(resolve('/(app)/settings')) },
 		{ id: 'search-ip', label: 'Search by IP address', hint: 'v0.1.0', disabled: true },
 		...nav
 			.filter((item) => item.planned)
@@ -127,11 +140,13 @@
 						</span>
 					{:else}
 						<a
-							href={resolve('/(app)')}
-							aria-current="page"
+							href={item.href}
+							aria-current={item.active ? 'page' : undefined}
 							class={cn(
-								'flex items-center gap-2 rounded-[3px] px-2 py-1.5 text-sm font-medium',
-								'bg-sheet text-ink shadow-[inset_0_0_0_1px_var(--color-rule-strong)]'
+								'flex items-center gap-2 rounded-[3px] px-2 py-1.5 text-sm',
+								item.active
+									? 'bg-sheet font-medium text-ink shadow-[inset_0_0_0_1px_var(--color-rule-strong)]'
+									: 'text-ink-2 hover:bg-sheet hover:text-ink'
 							)}
 						>
 							<Icon size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -225,7 +240,7 @@
 						<p class="truncate text-xs text-ink-3">{data.user?.email}</p>
 					</div>
 					<DropdownMenu.Separator class="mx-1 my-1 border-t border-rule" />
-					<MenuItem disabled>Account settings<span class="ml-auto text-xs">Planned</span></MenuItem>
+					<MenuItem onSelect={() => goto(resolve('/(app)/settings'))}>Account settings</MenuItem>
 					<MenuItem onSelect={signOut}>
 						<LogOut size={14} strokeWidth={1.75} aria-hidden="true" />
 						Sign out

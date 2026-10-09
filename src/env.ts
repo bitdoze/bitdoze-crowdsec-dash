@@ -28,6 +28,11 @@ export const variables = defineEnvVars({
 		description: 'Directory with drizzle-kit migrations, applied at startup.',
 		schema: (value) => value ?? './drizzle'
 	},
+	TRUSTED_PROXIES: {
+		description:
+			'Comma-separated reverse-proxy IPs allowed to supply x-forwarded-for, or `*` when the process is only reachable through a proxy. Unset = the socket address is always the client IP. Read by server/index.js.',
+		schema: (value) => value
+	},
 	DEMO_FIXTURES: {
 		description:
 			'Set to `true` to serve clearly labeled fixture data on the overview outside development (e2e, reviews). Dev mode always enables fixtures. Never set in real deployments.',

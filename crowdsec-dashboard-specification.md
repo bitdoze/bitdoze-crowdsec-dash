@@ -699,6 +699,7 @@ Checked boxes below are complete; partially complete items say what remains.
 - 2026-10-09: Delivery landed: multi-stage Docker image (428 MB, non-root), `compose.yaml`, CI (lint, check, tests, build, container smoke test, Trivy), release-please and multi-arch GHCR publishing with provenance, SBOM, and cosign; actions pinned to commit SHAs; Dependabot with a 7-day cooldown.
 - 2026-10-09: CI fixes and image hardening (Debian updates, npm removed from runtime). The interrupted design-system work is parked on branch `wip/design-system` (does not type-check yet). `HANDOFF.md` records state, owner actions, and next steps.
 - 2026-10-09: "Inspection Record" design system landed on `wip/design-system`: OKLCH themes (light paper / dark carbon copy), Public Sans, stamp-violet accent, six status stamps, component set (Module, Stamp, Evidence, Menu, Sheet, Palette, Field, FilterSelect, CodeBlock, ActivityChart, ScenarioRamp), app shell (sidebar + header + filters + Ctrl K), overview page with schedule/evidence/observations/measurements, restyled `/login` and `/setup`, overview types and `before`/`mixed` fixtures gated by `DEMO_FIXTURES` + `?fixture=`, Playwright e2e in CI, `scripts/contrast-report.mjs` (all pairs AA), `DESIGN.md`.
+- 2026-10-09: Phase 2 auth hardening landed on `main`: role model (`admin`/`operator`/`viewer` via Better Auth access control), `requireUser`/`requirePermission` server guards, application-level login throttling (`rate_limit` keys `login:<email>:<ip>` — direct `auth.api.signInEmail` bypasses BA's HTTP rate limiter), TOTP + recovery-code two-factor with a two-step `/login`, `/settings` (2FA, session list/revoke, password change) and `/settings/users` (create/role/ban/remove with self-protection), `audit` table + best-effort `recordAudit`, trusted-proxy `X-Forwarded-For` resolution (`TRUSTED_PROXIES`), `scripts/recover.mjs` lockout recovery, `e2e/security.spec.ts` (redirect target, 403s, full TOTP sign-in, throttle, sign-out).
 
 ### Phase 0 — Confirm the foundation and compatibility
 
@@ -743,11 +744,11 @@ Checked boxes below are complete; partially complete items say what remains.
 
 **Depends on:** phase 1.
 
-- [ ] Implement administrator/operator/viewer permissions on every server operation.
-- [ ] Add local login, session revocation, throttling, TOTP/recovery flow, and disabled public signup after bootstrap.
-- [ ] Add a server authorization layer, validated command schemas, and audit recording.
-- [ ] Verify origin/cookie/proxy handling and keep secrets out of client bundles and rendered page data.
-- [ ] Document emergency local account and lockout recovery.
+- [x] Implement administrator/operator/viewer permissions on every server operation.
+- [x] Add local login, session revocation, throttling, TOTP/recovery flow, and disabled public signup after bootstrap.
+- [x] Add a server authorization layer, validated command schemas, and audit recording.
+- [x] Verify origin/cookie/proxy handling and keep secrets out of client bundles and rendered page data.
+- [x] Document emergency local account and lockout recovery.
 
 **Acceptance gate:** unauthorized direct API/action requests cannot mutate policy, queue jobs, read secrets, or bypass read-only permissions.
 

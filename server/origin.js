@@ -49,3 +49,59 @@ export function pinOriginHeaders(req, origin) {
 	req.headers['x-forwarded-proto'] = origin.protocol.replace(':', '');
 	req.headers['x-forwarded-host'] = origin.host;
 }
+
+/**
+ * Normalizes an IP for comparison: trims, drops an IPv6-mapped IPv4 prefix,
+ * and drops a port suffix accidentally attached to an IPv4 address.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+export function normalizeIp(value) {
+	const ip = value.trim().toLowerCase();
+	if (ip.startsWith('::ffff:')) return ip.slice(7);
+	return ip;
+}
+
+/**
+ * Parses TRUSTED_PROXIES into a matcher. `*` trusts every peer — use only when
+ * the process can never be reached directly. Otherwise an exact match against
+ * the immediate peer's address (the reverse proxy). Returns null when unset.
+ *
+ * @param {string | undefined} value
+ * @returns {((ip: string) => boolean) | null}
+ */
+export function trustedProxyMatcher(value) {
+	if (!value) return null;
+	const entries = value
+		.split(',')
+		.map((v) => v.trim())
+		.filter(Boolean);
+	if (entries.includes('*')) return () => true;
+	const set = new Set(entries.map(normalizeIp));
+	return (ip) => set.has(normalizeIp(ip));
+}
+
+/**
+ * Resolves the client IP for this request.
+ *
+ * When the immediate peer is a trusted proxy, its `x-forwarded-for` chain is
+ * authoritative and the client is the leftmost entry. Otherwise the header is
+ * client-supplied fiction and the socket address is used — the value is always
+ * written back into x-forwarded-for so SvelteKit's getClientAddress and Better
+ * Auth's IP reads see an honest value.
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @param {((ip: string) => boolean) | null} isTrusted
+ * @returns {string}
+ */
+export function resolveClientIp(req, isTrusted) {
+	const socketIp = normalizeIp(req.socket?.remoteAddress ?? '');
+	if (isTrusted && isTrusted(socketIp)) {
+		const xff = req.headers['x-forwarded-for'];
+		const chain = (Array.isArray(xff) ? xff.join(',') : (xff ?? '')).split(',');
+		const client = chain.map((v) => v.trim()).filter(Boolean)[0];
+		if (client) return client;
+	}
+	return socketIp;
+}

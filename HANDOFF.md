@@ -33,26 +33,27 @@ Bitdoze CrowdSec Dash: a self-hosted, MIT-licensed dashboard that sets up, verif
 | `35753e4` | Docker image (non-root, healthcheck, graceful stop), `compose.yaml`, CI workflow, release-please + multi-arch GHCR publishing with provenance, SBOM, and cosign; Dependabot                                                                                                                                                                                                                                                          |
 | `ba13498` | CI fixes (smoke-test redirect check, metadata-action `enable` values, no Node/@types/node majors from Dependabot)                                                                                                                                                                                                                                                                                                                    |
 | `5394842` | Image security: Debian updates applied and npm removed from the runtime image (local Trivy scan: 0 fixable HIGH/CRITICAL)                                                                                                                                                                                                                                                                                                            |
+| `bc2ade5` | "Inspection Record" design system, app shell, and overview (`DESIGN.md`): OKLCH light/dark themes, Public Sans, six status stamps, component set, sites × tests schedule with evidence + observations, fixtures via `DEMO_FIXTURES` + `?fixture=`, restyled `/login` and `/setup`, Playwright e2e in CI, `scripts/contrast-report.mjs` (all pairs AA)                                                                                |
 
 Verified locally: `npm ci`, lint, `svelte-check`, 15 unit tests, build, production smoke test, and a Docker smoke test (setup, restart persistence, uid 1000, 0600 secret file, graceful stop).
 
 On GitHub: CI is green on `5394842` (verify, image smoke test, Trivy). The `Release` workflow pushed an `edge` image on `ba13498`; on `5394842` it stopped at release-please until owner action 1 below is done.
 
-## Done so far (on `wip/design-system`, not yet merged)
+## Phase 2 (auth hardening) — done, uncommitted
 
-The "Inspection Record" design system and overview are built, verified, and documented:
+Everything below is implemented, verified, and staged for commit; see `git status`:
 
-- `DESIGN.md` records the tokens, type, components, layout grammar, and accessibility rules. `scripts/contrast-report.mjs` checks every used token pair against AA (all pass: text ≥4.69:1, control borders ≥3.44:1; decorative hairlines are marked informational).
-- Theme tokens in `src/routes/layout.css` (light "form paper" / dark "carbon copy", `prefers-color-scheme` + `[data-theme]` override). A new `--line` token covers WCAG-1.4.11 component boundaries; `--rule`/`--rule-strong` stay decorative.
-- Components in `src/lib/components/`: Wordmark, Module, Stamp, ObservationCode, Evidence, Button, Field, FilterSelect, Kbd, CodeBlock, Menu/MenuItem, Tooltip, Sheet, Palette, ScenarioRamp, ActivityChart, AuthShell — Bits UI + Lucide, no shadcn CLI.
-- App shell (`src/routes/(app)/+layout.svelte`): 232px sidebar, Sheet below `lg`, header with site/range filters, "Fixture data" chip, Ctrl K palette, user menu.
-- Overview (`src/routes/(app)/+page.svelte`): header band + verdict stamp, server-wide checks, sites × tests schedule with per-cell evidence (Escape + focus restore), ordered observations with "Show fix" code blocks, measurements/activity/scenarios, empty state, fixture-only re-inspect animation (~100ms stagger, `aria-live`, reduced-motion safe).
-- Overview types + `before`/`mixed` fixtures: `src/lib/overview/types.ts`, `fixtures.ts`, `format.ts`; server resolution in `src/lib/server/overview.ts` (dev or `DEMO_FIXTURES=true`, `?fixture=before|mixed`, otherwise `source: 'none'`).
-- `/login` and `/setup` restyled via `AuthShell`.
-- E2E: `npm run test:e2e` (Playwright, 16 tests incl. setup, fixtures, evidence Esc, Show fix, palette, empty state, re-inspect); `SCREENSHOTS=1` captures light/dark × desktop/mobile into `.impeccable/review/`; CI `e2e` job added.
-- Verified on the branch: `npm ci`, lint, `svelte-check` (0/0), 21 unit tests, build, 16 e2e tests, contrast report, `impeccable detect` clean.
+- **Roles:** `admin`/`operator`/`viewer` via Better Auth access control (`src/lib/server/auth.ts`); pure role→permission logic in `src/lib/roles.ts` (client-safe), request guards `requireUser`/`requirePermission` in `src/lib/server/roles.ts`. Permissions: `read` (all) → `operate` (operator+) → `configure` (admin).
+- **Login throttling:** `src/lib/server/throttle.ts` — confirmed gap: `auth.api.signInEmail` from a form action bypasses BA's HTTP rate limiter (`onRequestRateLimit` runs in the router only). Own limiter stores `login:<email>:<ip>` keys in BA's `rate_limit` table: 5 failures per 10-min window per email+IP, cleared on success.
+- **Two-factor:** `twoFactor` plugin; `/login` is a two-step flow (`signIn` → `verify`/`verifyBackup` named actions — Kit forbids `default` + named actions together). Settings page handles enable/disable + backup codes.
+- **`/settings`** (any signed-in user): 2FA status + setup (URI shown once + recovery codes), session list with revoke + "sign out all others", password change (revokes other sessions).
+- **`/settings/users`** (`configure` only): create account, role select, ban/unban, remove; self-demotion/self-ban/self-delete blocked; every action audited.
+- **Audit:** `audit` table (migration `0001`), best-effort `recordAudit` (`src/lib/server/audit.ts`) wired into login, setup, 2FA, user ops, session revocation.
+- **Trusted proxies:** `server/origin.js` gained `trustedProxyMatcher`/`resolveClientIp`; `server/index.js` rewrites `x-forwarded-for` to the honest client IP (socket peer unless the peer is in `TRUSTED_PROXIES`, `*` trusts all). Spoofed origin forwarding headers stay pinned.
+- **Recovery CLI:** `npm run recover -- <email>` (`scripts/recover.mjs`) — new random password via BA's own `hashPassword`, clears 2FA rows + sessions + ban + throttle keys, writes an audit row.
+- **Tests:** 41 unit (roles matrix, throttle windows/scope/clear, XFF trust) + `e2e/security.spec.ts` (unauthenticated redirect, 403 for viewer on admin UI, full TOTP enable→sign-in→disable, throttle trip + identity scoping, sign-out).
 
-To finish this step: review the branch, merge `wip/design-system` into `main` (or open a PR), and push. CI will run the new e2e job; Playwright browsers are cached by version.
+Verified: `npm run lint`, `npm run check` (0/0), `npm test` (41), `npm run build`, `npx playwright test` (16 + setup; screenshots opt-in), `node scripts/contrast-report.mjs`, recovery CLI against a real DB.
 
 ## Actions only the owner can take
 
@@ -63,20 +64,7 @@ To finish this step: review the branch, merge `wip/design-system` into `main` (o
 
 ## Next steps, in order
 
-### 1. Merge `wip/design-system` into `main`
-
-All the "Done when" items passed; see "Done so far (on `wip/design-system`)" above and `DESIGN.md`. Review the `.impeccable/review/` screenshots locally (`SCREENSHOTS=1 npm run test:e2e` regenerates them), then merge or open a PR. The binding surface brief remains `.impeccable/surfaces/src-routes-app-page-svelte.md`.
-
-### 2. Phase 2: authentication and permissions (spec section 9 and phase 2)
-
-- Roles admin, operator, and viewer through the Better Auth admin plugin's access control, enforced server-side on every load, action, and endpoint.
-- TOTP and recovery codes (`twoFactor` plugin). Session list and revocation.
-- **Suspected gap to verify first:** `/login` calls `auth.api.signInEmail` from a form action, which probably bypasses Better Auth's HTTP rate limiter. Add real login throttling and test it.
-- Client-IP handling: what Better Auth and the app trust behind a reverse proxy, given that `server/index.js` pins the origin headers.
-- A lockout-recovery CLI or documented procedure.
-- Tests: direct requests by viewers and unauthenticated users must fail.
-
-### 3. Phase 3: read-only CrowdSec monitoring, then release v0.1.0
+### 1. Phase 3: read-only CrowdSec monitoring, then release v0.1.0
 
 - Follow spec section 4 (capability tiers, exact LAPI routes) and the phase 3 checklist.
 - Build in this order: the typed LAPI client (watcher credentials or mTLS), worker-owned incremental alert sync, CAPI excluded by default, metrics scraping, site attribution, hourly rollups, then replace the overview fixtures with live data.
@@ -98,6 +86,11 @@ Later phases (4–13) are fully described in the spec.
 - **Kit 3 typed routes:** `resolve()` from `$app/paths` takes route IDs — the `(app)` group makes the overview `/(app)`, not `/`. ESLint flags bare `goto('/...')` calls; use `resolve()` and `SvelteURLSearchParams`.
 - **Playwright storage state:** a test that signs out invalidates the shared session file for later tests in the same run. Keep sign-out last, then restore the state file (see `e2e/overview.spec.ts`); shared constants live in `e2e/helpers.ts`, never import one spec from another.
 - **Ctrl+K tests:** press-and-retry until the palette appears — the keydown listener may not be hydrated yet right after `goto`.
+- **Kit 3 named actions:** a `default` action cannot coexist with named actions on the same page (POST throws `action_default_with_named`). `/login` uses `signIn`/`verify`/`verifyBackup`.
+- **Better Auth rate limit:** `auth.api.*` calls from form actions bypass the HTTP rate limiter — app-level throttling lives in `src/lib/server/throttle.ts`.
+- **Playwright `newContext` in the test runner** inherits `use` options, including `storageState` — pass `storageState: { cookies: [], origins: [] }` for a truly signed-out context (`freshContext` in `e2e/security.spec.ts`). `browser.newPage()` inherits too.
+- **Better Auth API calls from tests** need an explicit `Origin` header (`page.request.post` doesn't send one): `MISSING_OR_NULL_ORIGIN` otherwise.
+- **Playwright `reuseExistingServer`:** a killed run can leave its web server alive; the next run then reuses a stale build. Check the port before rerunning.
 
 ## How to track progress
 

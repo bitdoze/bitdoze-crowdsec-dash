@@ -13,11 +13,12 @@
 
 	interface Props {
 		state: StampState;
+		label?: string;
 		size?: 'sm' | 'lg';
 		class?: string;
 	}
 
-	let { state, size = 'sm', class: className }: Props = $props();
+	let { state, label, size = 'sm', class: className }: Props = $props();
 
 	const meta: Record<StampState, { label: string; icon: Component; cls: string; ruled: boolean }> =
 		{
@@ -76,7 +77,7 @@
 	{#if m.ruled}
 		<span class="m-0.5 inline-flex items-center gap-1.5 border border-current px-1.5 py-px">
 			<Icon size={iconSize} strokeWidth={1.75} aria-hidden="true" />
-			{m.label}
+			{label ?? m.label}
 		</span>
 	{:else}
 		<span class="inline-flex items-center gap-1.5 px-1.5 py-px">
@@ -86,7 +87,7 @@
 				aria-hidden="true"
 				class={state === 'checking' ? 'stamp-spin' : undefined}
 			/>
-			{m.label}
+			{label ?? m.label}
 		</span>
 	{/if}
 </span>

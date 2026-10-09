@@ -17,6 +17,7 @@ Start with `HANDOFF.md`: current state, owner decisions, and the next steps in o
 - `npm run db:generate` — emit a migration into `drizzle/` from `src/lib/server/db/schema.ts`
 - `npm run db:migrate` / `npm run db:studio` — drizzle-kit utilities
 - `npm run auth:schema` — regenerate `src/lib/server/db/auth.schema.ts` from `auth.ts` (run after changing Better Auth options/plugins, then `db:generate`)
+- `npm run recover -- <email>` — emergency account recovery against `DATA_DIR`: resets the password (prints it once), clears 2FA, sessions, ban, and login throttle
 
 ## Conventions
 
@@ -40,11 +41,19 @@ Start with `HANDOFF.md`: current state, owner decisions, and the next steps in o
   protocol to `https`. `server/index.js` + `server/origin.js` pin the origin
   from `ORIGIN` by rewriting `x-forwarded-proto`/`x-forwarded-host` before the
   handler sees them. Form POSTs with a mismatched `Origin` header are rejected
-  by SvelteKit CSRF protection.
+  by SvelteKit CSRF protection. `TRUSTED_PROXIES` (comma-separated IPs, or
+  `*` when the process can only be reached through the proxy) controls which
+  peers may supply `x-forwarded-for`; otherwise the socket peer is the client.
 - Auth: Better Auth email/password only; public sign-up is disabled
   (`disableSignUp` + `disabledPaths`). First admin is created on `/setup` with
-  a one-time token logged once at startup (or `SETUP_TOKEN`); roles via the
-  `admin` plugin (`admin` / `viewer`; `viewer` is the default role).
+  a one-time token logged once at startup (or `SETUP_TOKEN`). Roles
+  `admin`/`operator`/`viewer` via the `admin` plugin's access control
+  (`viewer` default); `requireUser`/`requirePermission` in
+  `src/lib/server/roles.ts` guard every server load/action — direct
+  `auth.api.*` calls bypass BA's rate limiter, so login throttling is
+  application-level (`src/lib/server/throttle.ts`). Two-factor (TOTP +
+  recovery codes) makes `/login` a two-step flow — remember Kit forbids a
+  `default` action alongside named actions.
 - Secrets: `resolveSecret(name)` in `src/lib/server/secrets.ts` — env var,
   `<NAME>_FILE`, or a generated value persisted under `DATA_DIR/secrets/` with
   mode 0600. Never log secret values (the setup token is the single allowed

@@ -13,18 +13,30 @@
 		value: string;
 		options: Option[];
 		disabled?: boolean;
+		hideLabel?: boolean;
 		class?: string;
 		onchange?: (value: string) => void;
 	}
 
-	let { label, value, options, disabled = false, class: className, onchange }: Props = $props();
+	let {
+		label,
+		value,
+		options,
+		disabled = false,
+		hideLabel = false,
+		class: className,
+		onchange
+	}: Props = $props();
 	const id = $props.id();
 </script>
 
 <div class={cn('flex items-center gap-1.5', className)}>
 	<label
 		for={id}
-		class="text-xs font-semibold tracking-[0.05em] whitespace-nowrap text-ink-3 uppercase"
+		class={cn(
+			'text-xs font-semibold tracking-[0.05em] whitespace-nowrap text-ink-3 uppercase',
+			hideLabel && 'sr-only'
+		)}
 	>
 		{label}
 	</label>

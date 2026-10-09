@@ -9,7 +9,7 @@
  */
 import http from 'node:http';
 import process from 'node:process';
-import { parseOrigin, pinOriginHeaders } from './origin.js';
+import { parseOrigin, pinOriginHeaders, resolveClientIp, trustedProxyMatcher } from './origin.js';
 
 const originEnv = process.env.ORIGIN;
 if (!originEnv) {
@@ -36,6 +36,9 @@ process.env.HOST_HEADER = 'x-forwarded-host';
 const host = process.env.HOST || '0.0.0.0';
 const port = parseInt(process.env.PORT || '3000');
 const shutdown_timeout = parseInt(process.env.SHUTDOWN_TIMEOUT || '30');
+// Comma-separated reverse-proxy IPs allowed to supply x-forwarded-for, or `*`
+// when the process is only ever reachable through a proxy. Unset = nobody may.
+const isTrustedProxy = trustedProxyMatcher(process.env.TRUSTED_PROXIES);
 
 /** @type {typeof import('../build/handler.js').handler} */
 let handler;
@@ -53,6 +56,7 @@ let shutdown_timeout_id;
 
 server.on('request', (req, res) => {
 	pinOriginHeaders(req, origin);
+	req.headers['x-forwarded-for'] = resolveClientIp(req, isTrustedProxy);
 
 	req.on('close', () => {
 		if (shutdown_timeout_id) {
