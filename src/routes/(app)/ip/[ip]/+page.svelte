@@ -35,6 +35,48 @@
 	{#if data.connected}
 		<div class="grid gap-4 lg:grid-cols-2">
 			<Module title="Live lookup" class="lg:col-span-2">
+				{#if data.canLookup}
+					<div class="mb-3 border border-rule bg-sheet px-4 py-3">
+						<form method="post" action="?/allowlistCheck" class="flex items-center gap-3">
+							<Button type="submit" size="sm">Check centralized allowlists</Button>
+							<span class="text-xs text-ink-3">
+								Asks the LAPI which centralized allowlists (if any) cover this address.
+							</span>
+						</form>
+						{#if form?.allowlist && form.allowlist.ip === data.ip}
+							{@const lists = form.allowlist.raw?.allowlists}
+							<div class="mt-3 border-t border-rule pt-3">
+								{#if Array.isArray(lists) && lists.length}
+									<p class="text-sm text-ink-2">
+										Covered by {lists.length} centralized allowlist{lists.length === 1 ? '' : 's'}:
+									</p>
+									<ul class="mt-1 space-y-1 text-sm text-ink-2">
+										{#each lists as l, i (i)}
+											<li>
+												<span class="font-mono text-xs">{l.name ?? l.id ?? 'list'}</span>
+												{#if l.description}<span class="text-ink-3"> — {l.description}</span>{/if}
+											</li>
+										{/each}
+									</ul>
+								{:else if Array.isArray(lists)}
+									<p class="text-sm text-ink-2">Not on any centralized allowlist.</p>
+								{:else}
+									<p class="font-mono text-xs text-ink-2">
+										{JSON.stringify(form.allowlist.raw)}
+									</p>
+								{/if}
+								<p class="mt-2 text-xs text-ink-3">
+									Allowlists live in three places — centralized CrowdSec lists (this check), parser
+									whitelists, and bouncer trusted-IP config. If the address is still blocked, check
+									the other two.
+									{#if data.isPrivate}
+										Private ranges are usually parser-allowlisted by default.
+									{/if}
+								</p>
+							</div>
+						{/if}
+					</div>
+				{/if}
 				{#if !data.hasBouncerKey}
 					<div class="border border-rule bg-sheet px-4 py-4">
 						<p class="inline-flex items-center gap-2 text-sm text-ink-3">

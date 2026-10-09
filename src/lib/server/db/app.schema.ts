@@ -189,3 +189,111 @@ export const activityRollup = sqliteTable(
 		index('activityRollup_site_idx').on(table.siteId)
 	]
 );
+
+/**
+ * A manual decision the dashboard pushed (or asked the operator to push)
+ * upstream. Tracks requested → confirmed lifecycle: `pushed` once the
+ * LAPI accepted it, `confirmed` when the synced projection shows the
+ * decision active, `removed` after unban reconciles.
+ */
+export const decisionRequest = sqliteTable(
+	'decision_request',
+	{
+		id: text('id').primaryKey(),
+		scope: text('scope', { enum: ['ip', 'range'] }).notNull(),
+		value: text('value').notNull(),
+		type: text('type', { enum: ['ban', 'captcha'] }).notNull(),
+		durationS: integer('duration_s').notNull(),
+		reason: text('reason'),
+		state: text('state', {
+			enum: ['pushed', 'confirmed', 'failed', 'removing', 'removed']
+		}).notNull(),
+		/** LAPI decision id once observed in the projection. */
+		upstreamId: integer('upstream_id'),
+		error: text('error'),
+		createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' })
+			.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+			.notNull(),
+		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull()
+	},
+	(table) => [
+		index('decisionRequest_value_idx').on(table.value),
+		index('decisionRequest_state_idx').on(table.state)
+	]
+);
+
+/**
+ * Persistent inbox row — one per event worth surfacing. `eventKey`
+ * dedupes recurring events (e.g. repeated outage) so the inbox shows one
+ * row with a bumped `lastAt`/`count` instead of a stream.
+ */
+export const notification = sqliteTable(
+	'notification',
+	{
+		id: text('id').primaryKey(),
+		eventKey: text('event_key').notNull().unique(),
+		class: text('class').notNull(), // outage | security | admin | job
+		severity: text('severity', { enum: ['info', 'warning', 'critical'] }).notNull(),
+		title: text('title').notNull(),
+		body: text('body'),
+		href: text('href'),
+		count: integer('count').default(1).notNull(),
+		readAt: integer('read_at', { mode: 'timestamp_ms' }),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+		lastAt: integer('last_at', { mode: 'timestamp_ms' }).notNull()
+	},
+	(table) => [
+		index('notification_eventKey_idx').on(table.eventKey),
+		index('notification_lastAt_idx').on(table.lastAt)
+	]
+);
+
+/** Delivery channel — type determines which config keys apply (JSON). */
+export const notificationChannel = sqliteTable('notification_channel', {
+	id: text('id').primaryKey(),
+	name: text('name').notNull(),
+	type: text('type', {
+		enum: ['smtp', 'webhook', 'ntfy', 'gotify', 'discord', 'slack', 'telegram']
+	}).notNull(),
+	/** JSON config; secrets stored inside `secretEnc` only. */
+	config: text('config').notNull(),
+	/** symmetricEncrypt'd JSON of secrets (tokens, passwords, webhook URLs). */
+	secretEnc: text('secret_enc'),
+	enabled: integer('enabled', { mode: 'boolean' }).default(true).notNull(),
+	/** Minimum severity delivered to this channel. */
+	minSeverity: text('min_severity', { enum: ['info', 'warning', 'critical'] })
+		.default('info')
+		.notNull(),
+	createdAt: integer('created_at', { mode: 'timestamp_ms' })
+		.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+		.notNull()
+});
+
+/**
+ * Transactional outbox — one row per notification × channel delivery.
+ * The worker drains pending rows with bounded backoff; `failed` rows keep
+ * the last error and can be retried manually.
+ */
+export const notificationOutbox = sqliteTable(
+	'notification_outbox',
+	{
+		id: text('id').primaryKey(),
+		notificationId: text('notification_id')
+			.notNull()
+			.references(() => notification.id, { onDelete: 'cascade' }),
+		channelId: text('channel_id')
+			.notNull()
+			.references(() => notificationChannel.id, { onDelete: 'cascade' }),
+		state: text('state', { enum: ['pending', 'delivered', 'failed'] }).notNull(),
+		attempts: integer('attempts').default(0).notNull(),
+		lastError: text('last_error'),
+		nextRetryAt: integer('next_retry_at', { mode: 'timestamp_ms' }),
+		deliveredAt: integer('delivered_at', { mode: 'timestamp_ms' }),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull()
+	},
+	(table) => [
+		index('outbox_state_idx').on(table.state, table.nextRetryAt),
+		index('outbox_notification_idx').on(table.notificationId)
+	]
+);

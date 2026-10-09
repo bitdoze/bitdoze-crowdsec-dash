@@ -9,6 +9,82 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { audit } from '#lib/server/db/app.schema.ts';
 import { db } from '#lib/server/db/index.ts';
+import { recordEvent } from '#lib/server/notify/core.ts';
+
+/**
+ * Audit actions that also fan out to the notification inbox. Kept narrow —
+ * routine reads and successful logins don't notify. `fields` whitelists which
+ * detail keys reach the body (internal ids and secrets never do).
+ */
+const NOTIFY_ACTIONS: Record<
+	string,
+	{
+		severity: 'info' | 'warning' | 'critical';
+		title: string;
+		href: string;
+		fields?: string[];
+	}
+> = {
+	'admin.user_created': {
+		severity: 'info',
+		title: 'User created',
+		href: '/settings/users',
+		fields: ['email', 'role']
+	},
+	'admin.user_banned': { severity: 'warning', title: 'User banned', href: '/settings/users' },
+	'admin.user_unbanned': { severity: 'info', title: 'User unbanned', href: '/settings/users' },
+	'admin.user_removed': { severity: 'warning', title: 'User removed', href: '/settings/users' },
+	'admin.role_changed': {
+		severity: 'warning',
+		title: 'User role changed',
+		href: '/settings/users',
+		fields: ['role']
+	},
+	'decision.create': {
+		severity: 'info',
+		title: 'Manual decision pushed',
+		href: '/decisions',
+		fields: ['value', 'type', 'durationS']
+	},
+	'decision.remove': {
+		severity: 'info',
+		title: 'Decision removal requested',
+		href: '/decisions',
+		fields: ['value']
+	},
+	'crowdsec.connected': {
+		severity: 'info',
+		title: 'CrowdSec connection saved',
+		href: '/settings/crowdsec',
+		fields: ['lapiUrl', 'machineId']
+	},
+	'crowdsec.disconnected': {
+		severity: 'warning',
+		title: 'CrowdSec disconnected',
+		href: '/settings/crowdsec'
+	},
+	'settings.notifications.channel': {
+		severity: 'info',
+		title: 'Notification channel changed',
+		href: '/settings/notifications',
+		fields: ['type', 'created', 'deleted']
+	},
+	'login.throttled': {
+		severity: 'warning',
+		title: 'Sign-in throttled',
+		href: '/notifications',
+		fields: ['email']
+	}
+};
+
+function describe(detail: Record<string, unknown> | undefined, fields: string[] | undefined) {
+	if (!detail) return undefined;
+	const keys = fields ?? Object.keys(detail);
+	const parts = keys
+		.filter((k) => detail[k] !== undefined && detail[k] !== null)
+		.map((k) => `${k}: ${String(detail[k])}`);
+	return parts.length ? parts.join(' · ').slice(0, 400) : undefined;
+}
 
 type AuditInput = {
 	event?: RequestEvent;
@@ -40,6 +116,17 @@ export async function recordAudit({
 			detail: detail ? JSON.stringify(detail) : null,
 			ip
 		});
+		const n = NOTIFY_ACTIONS[action];
+		if (n) {
+			await recordEvent(db, {
+				eventKey: `admin.${action}.${crypto.randomUUID()}`,
+				class: 'admin',
+				severity: n.severity,
+				title: n.title,
+				body: describe(detail, n.fields),
+				href: n.href
+			});
+		}
 	} catch (e) {
 		console.error(`audit write failed for ${action}:`, e);
 	}

@@ -39,6 +39,9 @@
 					>CrowdSec connection</a
 				>
 				<a href={resolve('/(app)/settings/users')} class="text-accent underline">Users</a>
+				<a href={resolve('/(app)/settings/notifications')} class="text-accent underline"
+					>Notifications</a
+				>
 			</nav>
 		{/if}
 	</header>

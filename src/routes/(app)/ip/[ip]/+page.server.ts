@@ -5,6 +5,7 @@ import { ipDetail, projectionFreshness } from '#lib/server/crowdsec/lists.ts';
 import { buildClient, getBouncerKey, getServer } from '#lib/server/crowdsec/connection.ts';
 import { LapiError } from '#lib/server/crowdsec/client.ts';
 import { requirePermission } from '#lib/server/roles.ts';
+import { isPrivateIp } from '#lib/ipaddr.ts';
 import { hasPermission } from '#lib/roles.ts';
 
 export const load: PageServerLoad = async (event) => {
@@ -16,6 +17,7 @@ export const load: PageServerLoad = async (event) => {
 		connected: srv.connected,
 		hasBouncerKey: srv.hasBouncerKey,
 		canLookup,
+		isPrivate: isPrivateIp(event.params.ip),
 		freshness,
 		ip: event.params.ip,
 		detail
@@ -74,6 +76,30 @@ export const actions: Actions = {
 						: e.kind === 'unreachable'
 							? `Could not reach the LAPI — ${e.message}`
 							: `LAPI answered ${e.status ?? 'unexpectedly'}.`
+					: e instanceof Error
+						? e.message
+						: String(e);
+			return fail(400, { lookupError: msg });
+		}
+	},
+
+	/**
+	 * Centralized allowlist check (tier A, CrowdSec ≥1.7). Reads only — no
+	 * write path exists over LAPI, so changes stay guided commands.
+	 */
+	allowlistCheck: async (event) => {
+		requirePermission(event, 'operate');
+		const client = await buildClient(db);
+		if (!client) return fail(400, { lookupError: 'Not connected to a LAPI.' });
+		try {
+			const raw = (await client.allowlistCheck(event.params.ip)) as {
+				allowlists?: Array<{ name?: string; id?: string | number; description?: string }>;
+			} | null;
+			return { allowlist: { ip: event.params.ip, raw } };
+		} catch (e) {
+			const msg =
+				e instanceof LapiError && e.status === 404
+					? 'This CrowdSec version does not expose /v1/allowlists/check (needs ≥1.7).'
 					: e instanceof Error
 						? e.message
 						: String(e);

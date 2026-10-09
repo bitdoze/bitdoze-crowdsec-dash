@@ -120,3 +120,72 @@ describe('LapiClient', () => {
 		} satisfies Partial<LapiError>);
 	});
 });
+
+describe('LapiClient — decisions & allowlists', () => {
+	it('pushManualDecision posts an alert carrying an origin=manual decision', async () => {
+		const { f, calls } = mockFetch((url) =>
+			url.includes('watchers/login')
+				? login()
+				: new Response(JSON.stringify({ ids: [1] }), { status: 200 })
+		);
+		await client(f).pushManualDecision({
+			scope: 'ip',
+			value: '9.9.9.9',
+			type: 'ban',
+			duration: '4h',
+			reason: 'brute force'
+		});
+		const call = calls.at(-1)!;
+		expect(call.url).toContain('/v1/alerts');
+		expect(call.init.method).toBe('POST');
+		const body = JSON.parse(call.init.body as string)[0];
+		expect(body.scenario).toBe('manual');
+		expect(body.source).toMatchObject({ scope: 'ip', value: '9.9.9.9', ip: '9.9.9.9' });
+		expect(body.decisions[0]).toMatchObject({
+			type: 'ban',
+			scope: 'ip',
+			value: '9.9.9.9',
+			duration: '4h',
+			origin: 'manual'
+		});
+		expect(body.message).toBe('brute force');
+	});
+
+	it('pushManualDecision uses range scope for CIDRs', async () => {
+		const { f, calls } = mockFetch((url) =>
+			url.includes('watchers/login') ? login() : new Response('[]', { status: 200 })
+		);
+		await client(f).pushManualDecision({
+			scope: 'range',
+			value: '10.0.0.0/8',
+			type: 'captcha',
+			duration: '1h'
+		});
+		const body = JSON.parse(calls.at(-1)!.init.body as string)[0];
+		expect(body.source).toMatchObject({ scope: 'range', value: '10.0.0.0/8', range: '10.0.0.0/8' });
+		expect(body.decisions[0].scope).toBe('range');
+	});
+
+	it('deleteDecision issues DELETE /v1/decisions/:id', async () => {
+		const { f, calls } = mockFetch((url) =>
+			url.includes('watchers/login')
+				? login()
+				: new Response(JSON.stringify({ nbDeleted: 1 }), { status: 200 })
+		);
+		await client(f).deleteDecision(42);
+		const call = calls.at(-1)!;
+		expect(call.url).toContain('/v1/decisions/42');
+		expect(call.init.method).toBe('DELETE');
+	});
+
+	it('allowlistCheck hits /v1/allowlists/check/:ip', async () => {
+		const { f, calls } = mockFetch((url) =>
+			url.includes('watchers/login')
+				? login()
+				: new Response(JSON.stringify({ address: '1.2.3.4', allowlists: [] }), { status: 200 })
+		);
+		const res = (await client(f).allowlistCheck('1.2.3.4')) as { allowlists: unknown[] };
+		expect(calls.at(-1)!.url).toContain('/v1/allowlists/check/1.2.3.4');
+		expect(res.allowlists).toEqual([]);
+	});
+});

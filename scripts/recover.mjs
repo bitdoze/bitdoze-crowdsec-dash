@@ -70,6 +70,23 @@ await client.batch(
 	'write'
 );
 
+// Inbox notification — same shape recordEvent writes. Best-effort: databases
+// migrated before the notification table existed shouldn't fail recovery.
+try {
+	await client.execute({
+		sql: "INSERT INTO notification (id, event_key, class, severity, title, body, href, count, created_at, last_at) VALUES (?, ?, 'admin', 'critical', 'Emergency recovery used', ?, '/settings/users', 1, ?, ?)",
+		args: [
+			crypto.randomUUID(),
+			`admin.recovery.${crypto.randomUUID()}`,
+			`Password reset for ${user.email} via scripts/recover.mjs`,
+			now,
+			now
+		]
+	});
+} catch {
+	/* notification table absent on older databases */
+}
+
 console.log(`Account recovered: ${user.email}`);
 console.log(`New password (shown once — change it after sign-in): ${password}`);
 console.log('Two-factor was disabled and all sessions were signed out.');

@@ -61,7 +61,13 @@
 			active: page.url.pathname.startsWith('/decisions')
 		},
 		{ id: 'protection', label: 'Protection', icon: ShieldCheck, planned: true as const },
-		{ id: 'notifications', label: 'Notifications', icon: Bell, planned: true as const },
+		{
+			id: 'notifications',
+			label: 'Notifications',
+			icon: Bell,
+			href: resolve('/(app)/notifications'),
+			active: page.url.pathname.startsWith('/notifications')
+		},
 		{ id: 'system', label: 'System', icon: Activity, planned: true as const },
 		{
 			id: 'settings',
@@ -107,6 +113,11 @@
 			id: 'go-decisions',
 			label: 'Go to Decisions',
 			action: () => goto(resolve('/(app)/decisions'))
+		},
+		{
+			id: 'go-notifications',
+			label: 'Go to Notifications',
+			action: () => goto(resolve('/(app)/notifications'))
 		},
 		{ id: 'search-ip', label: 'Search by IP address', hint: 'v0.1.0', disabled: true },
 		...nav

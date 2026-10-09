@@ -15,8 +15,9 @@ export const init: ServerInit = async () => {
 	if (users === 0) beginSetup();
 
 	// Worker-owned polling — starts idle until a CrowdSec connection exists.
+	// SYNC_INTERVAL_MS is a test knob for e2e (outage→notification latency).
 	const { startWorker } = await import('#lib/server/crowdsec/worker.ts');
-	startWorker();
+	startWorker(Number(process.env.SYNC_INTERVAL_MS) || undefined);
 };
 
 const handleBetterAuth: Handle = async ({ event, resolve }) => {

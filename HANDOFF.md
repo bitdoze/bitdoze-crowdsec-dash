@@ -74,6 +74,24 @@ Verified: `npm run check` 0/0, `npm run lint` clean, `npm test` 72, `npm run bui
 
 **Not yet:** reference-host connect (owner action 4), v0.1.0 tag (release-please PR after owner action 1).
 
+## Phase 4 (decisions, allowlists, notifications) — done, on `main`
+
+- **Decision request ledger** (`decision_request`, migration `0003`): `src/lib/server/crowdsec/decisions.ts` — `pushDecision` wraps `POST /v1/alerts` (manual alert carrying the decision), `requestRemoval` wraps `DELETE /v1/decisions`. States `pushed → confirmed / removing → removed / failed`, reconciled each sync against the local projection; `upstream_id` + `error` retained.
+- **Validation** `src/lib/ipaddr.ts` (client-safe): IPv4/IPv6/CIDR normalize + `4h`/`4h30m`/`2d` duration parse (≤30 d cap).
+- **LAPI client** gained `pushDecision`, `deleteDecision`, `allowlists`, `allowlistCheck` (watcher credential — not the bouncer key).
+- **`/decisions`**: add-decision form (scope + value + type ban/captcha + duration + reason), request ledger table with state stamps, per-row Remove (`operate`+), client-IP display with private/proxy warning, "server-wide" scope note, captcha-bouncer caveat, "Allowlist my current IP" → guided `cscli` commands (no LAPI write path exists — nothing is pretended).
+- **`/ip/[ip]`**: `?/allowlistCheck` action (`operate`+) calls `/v1/allowlists/check/{ip}` — lists matching centralized allowlists, requires CrowdSec ≥1.7 (honest unsupported state below), and names the other two mechanisms (parser whitelists, bouncer trusted IPs) that can also cover an IP.
+- **Notifications**: `notification` (unique `event_key` dedupe → count + unread bump on repeat, no re-enqueue), `notification_channel` (encrypted `secret_enc`, `min_severity`), `notification_outbox` (pending/delivered/failed, `attempts`, `next_retry_at` backoff, manual retry).
+- **Delivery** `src/lib/server/notify/deliver.ts`: smtp (nodemailer 10.0.13 — newest was <7 days old at add time), webhook, ntfy, gotify, discord, slack, telegram; SSRF rules block loopback/link-local/metadata hostnames + IPs, allow LAN receivers, never follow redirects; errors redacted. Pure field specs live in `src/lib/notify-channels.ts` (client-safe) — server-only modules must never be imported by components, even type-only.
+- **UI**: `/notifications` inbox (class/severity/unread filters, pagination, per-row delivery rollup, mark read / mark all, retry failed), `/settings/notifications` channel CRUD + send-test; both added to nav + palette.
+- **Worker**: drains the outbox every tick (bounded batch, respects `nextRetryAt`) even while disconnected; emits `alerts.down`/`metrics.down` outages once per stable event and `*.recovered` on the next success (capture `lastError` _before_ the call clears it), plus hourly-deduped new-alert digests. `SYNC_INTERVAL_MS` overrides the 30 s tick for e2e.
+- **Audit fan-out**: `NOTIFY_ACTIONS` in `audit.ts` maps real action names (`admin.user_created`, `admin.user_banned|unbanned|removed`, `admin.role_changed`, `decision.create|remove`, `crowdsec.connected|disconnected`, `settings.notifications.channel`, `login.throttled`) to severity/title/href; `describe()` whitelists which detail fields reach the body — internal ids and secrets never do. `scripts/recover.mjs` writes a matching `admin.recovery` notification row directly (best-effort if the table predates it).
+- **E2E** `e2e/decisions.spec.ts` (8 tests): mock gained `POST /v1/alerts`, `DELETE /v1/decisions/{id}`, `/v1/allowlists*`, and a `/_hook` receiver bound on a LAN address; covers validation rejection, push→confirm→unban→removed, allowlist check + guided flow, webhook SSRF rejection + real `/_hook` delivery + inbox rollup + mark-all-read, and outage→recovery notifications (deterministic: keys cleared in `.e2e-data` first, then polled with reload).
+
+Verified: `npm run check` 0/0, `npm run lint` clean, `npm test` 102, `npm run build`, full `npx playwright test` 33 pass (+7 skipped), all four screens visually reviewed.
+
+**Not yet:** CVE-detect and failed-job notifications (no source yet), the "ban enforced on both fixture sites" check (needs the phase-5 multi-site fixture), release tag v0.2.0 (same release-please gate).
+
 ## Actions only the owner can take
 
 1. GitHub → Settings → Actions → General → enable **"Allow GitHub Actions to create and approve pull requests"**. Release-please fails without it (latest Release run: "GitHub Actions is not permitted to create or approve pull requests").
@@ -87,9 +105,11 @@ Verified: `npm run check` 0/0, `npm run lint` clean, `npm test` 72, `npm run bui
 
 - All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 
-### 2. Phase 4 (v0.2.0): decisions, allowlists, notifications — spec checklist.
+### 2. Phase 5 (v0.3.0): guided setup + verification for all three proxies — spec checklist.
 
-Later phases (4–13) are fully described in the spec.
+Topology detection, site inventory + first-run wizard, per-proxy generated config (logs, acquisition, real-IP, bouncer, AppSec, remediation presets), Compose snippets, the section-5.6 verification checks, and "not applied" marking until checks pass. The multi-site fixture here also unlocks phase 4's last unchecked item.
+
+Later phases (6–13) are fully described in the spec.
 
 ## Gotchas already learned
 
@@ -110,6 +130,12 @@ Later phases (4–13) are fully described in the spec.
 - **Better Auth API calls from tests** need an explicit `Origin` header (`page.request.post` doesn't send one): `MISSING_OR_NULL_ORIGIN` otherwise.
 - **Playwright `reuseExistingServer`:** a killed run can leave its web server alive; the next run then reuses a stale build. Check the port before rerunning.
 - **Vite dynamic-import split:** if a module is imported both statically and lazily, Vite bundles it eagerly and warns `INEFFECTIVE_DYNAMIC_IMPORT`. Split constants/light helpers (`map-projection.ts`) from heavy data (`map-geo.ts` holds the world-atlas TopoJSON) so the lazy chunk actually splits.
+- **Worker outage/recovery:** read `sync_state.lastError` _before_ running the operation — a successful sync clears it, so reading after always misses the recovery.
+- **SSR state across param navigation:** SvelteKit keeps `form` populated when only the route param changes — scope lookup results (`form.x.ip === data.ip`) or IP B shows IP A's answer.
+- **E2E `.e2e-data` persists between runs:** tests must be rerunnable — disconnect first when connected, randomize pushed IPs, and clear worker-produced notification keys before asserting outages or old rows create false positives. `SYNC_INTERVAL_MS` shortens the worker tick; mock kills/restarts happen via `/_down`.
+- **`svelte/no-navigation-without-resolve`:** `resolve()` is per-route overloaded, so a union `RouteId` won't type-check. For server-generated arbitrary internal hrefs (notification links), a scoped `eslint-disable-next-line` on a plain `href` is the honest option.
+- **Server-only modules in components:** don't import anything from `#lib/server/*` into `.svelte` files — even `import type` can drag server code into the client graph. Shared shapes go in `src/lib/` (e.g. `notify-channels.ts`) and get re-exported server-side.
+- **Dependency age rule:** pin versions ≥7 days old — `nodemailer@^10.0.13`, not the 2-day-old 10.0.16.
 
 ## How to track progress
 

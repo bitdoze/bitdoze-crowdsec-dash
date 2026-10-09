@@ -113,6 +113,66 @@ export class LapiClient {
 		});
 	}
 
+	/**
+	 * Manual decision via `POST /v1/alerts` (tier A write): the watcher pushes
+	 * an alert carrying a decision; the LAPI stores it with origin `manual`/`cscli`
+	 * — the same mechanism `cscli decisions add` uses remotely.
+	 */
+	async pushManualDecision(input: {
+		scope: 'ip' | 'range';
+		value: string;
+		type: 'ban' | 'captcha';
+		duration: string;
+		reason?: string;
+	}): Promise<unknown> {
+		const now = new Date().toISOString();
+		const body = [
+			{
+				capacity: 0,
+				leakspeed: '',
+				message: input.reason?.trim() || `manual ${input.type} via dashboard`,
+				scenario: 'manual',
+				simulated: false,
+				source: {
+					scope: input.scope === 'ip' ? 'ip' : 'range',
+					value: input.value,
+					...(input.scope === 'ip' ? { ip: input.value } : { range: input.value })
+				},
+				start_at: now,
+				stop_at: now,
+				decisions: [
+					{
+						type: input.type,
+						scope: input.scope,
+						value: input.value,
+						duration: input.duration,
+						origin: 'manual'
+					}
+				],
+				events: [],
+				labels: [{ key: 'console', value: 'csdash' }]
+			}
+		];
+		return this.request({ path: '/v1/alerts', method: 'POST', body });
+	}
+
+	/** Remove a decision by its LAPI id (tier A write). */
+	async deleteDecision(decisionId: number | string): Promise<unknown> {
+		return this.request({ path: `/v1/decisions/${decisionId}`, method: 'DELETE' });
+	}
+
+	/** Centralized allowlists, CrowdSec ≥1.7 (tier A read). */
+	async allowlists(): Promise<unknown> {
+		return this.request<unknown>({ path: '/v1/allowlists' });
+	}
+
+	/** Check whether an address is covered by a centralized allowlist. */
+	async allowlistCheck(ip: string): Promise<unknown> {
+		return this.request<unknown>({
+			path: `/v1/allowlists/check/${encodeURIComponent(ip)}`
+		});
+	}
+
 	private async ensureToken(): Promise<string> {
 		const now = Date.now();
 		if (this.token && now < this.token.expiresAt - 30_000) return this.token.value;
