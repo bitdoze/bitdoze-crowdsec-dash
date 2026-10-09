@@ -35,6 +35,29 @@ ORIGIN=http://localhost:3000 npm start
 derive it from the environment. `DATA_DIR` (default `./data`) holds the SQLite
 database and auto-generated secrets.
 
+## Docker
+
+```sh
+docker run -d --name csdash \
+  -p 127.0.0.1:3000:3000 \
+  -v csdash-data:/data \
+  ghcr.io/bitdoze/bitdoze-crowdsec-dash:edge
+```
+
+Then create the first administrator: the one-time setup token is printed in
+`docker logs csdash` — open `http://localhost:3000/setup` and enter it.
+For a real hostname set `-e ORIGIN=https://dash.example.com`.
+
+With Docker Compose (`compose.yaml`):
+
+```sh
+docker compose up -d
+docker compose logs -f dashboard   # setup token is logged here
+```
+
+Published image tags: `edge` (main branch), `X.Y.Z` / `X.Y` / `latest`
+(releases), and `sha-<commit>`.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).

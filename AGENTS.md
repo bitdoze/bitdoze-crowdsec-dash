@@ -47,3 +47,21 @@
 - Plain Tailwind markup only for now — no shadcn-svelte/design system yet.
 - Track progress by ticking the phase checklists in section 13 of the spec and
   adding a line to its progress log.
+- Commits follow **Conventional Commits** (`feat:`, `fix:`, `perf:`, `chore:`,
+  `docs:` …) — release-please builds the changelog and version bumps from them.
+
+## Docker & releases
+
+- `docker build -t csdash:test .` — multi-stage `node:24-slim` image; runtime
+  runs as `node` (uid 1000) with `VOLUME /data`, `EXPOSE 3000`, HEALTHCHECK on
+  `/healthz`.
+- `docker run -p 127.0.0.1:3000:3000 -v csdash-data:/data csdash:test` — the
+  setup token appears in the container logs.
+- `docker compose up -d` — same service from `compose.yaml`.
+- CI: `.github/workflows/ci.yml` runs verify + image smoke + Trivy on PRs and
+  main. Releases: `.github/workflows/release.yml` — release-please keeps a
+  release PR open on main; merge it only when a phase's release is due
+  (v0.1.0 = end of phase 3). Merging creates the tag, then the images job
+  pushes multi-arch `edge`/`sha-*`/`X.Y.Z`/`X.Y`/`latest` to GHCR with
+  provenance, SBOM, and a keyless cosign signature. All third-party actions
+  are pinned to commit SHAs.

@@ -1,0 +1,23 @@
+# Dashboard only — "connect" mode. Set ORIGIN to the public URL you will
+# reach the dashboard on.
+services:
+  dashboard:
+    build: .
+    image: ghcr.io/bitdoze/bitdoze-crowdsec-dash:edge
+    ports:
+      # local-only binding by default; front it with an HTTPS reverse proxy
+      - '127.0.0.1:3000:3000'
+    volumes:
+      - csdash-data:/data
+    environment:
+      ORIGIN: ${ORIGIN:-http://localhost:3000}
+    restart: unless-stopped
+
+  # Native CrowdSec on the same host: its LAPI listens on 127.0.0.1:8080,
+  # which is unreachable through Docker bridge networking. Either run the
+  # dashboard with `network_mode: host`, or bind LAPI/metrics to the Docker
+  # bridge address with a matching firewall rule. Never bind them to all
+  # interfaces. (See spec section 11.)
+
+volumes:
+  csdash-data:

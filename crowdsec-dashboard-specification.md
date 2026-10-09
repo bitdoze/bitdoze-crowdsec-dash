@@ -696,6 +696,7 @@ Checked boxes below are complete; partially complete items say what remains.
 
 - 2026-10-09: Specification reviewed and committed; MIT license; Cloudflare Free-plan default decided.
 - 2026-10-09: Foundation landed: scaffold cleanup, adapter-node with origin-pinning server (`server/`), migrations and SQLite pragmas at startup, secret resolution, health/readiness endpoints, first-admin bootstrap with one-time token, login/logout, unit tests. Visual direction chosen ("Inspection Record", `.impeccable/surfaces/`); product record in `PRODUCT.md`.
+- 2026-10-09: Delivery landed: multi-stage Docker image (428 MB, non-root), `compose.yaml`, CI (lint, check, tests, build, container smoke test, Trivy), release-please and multi-arch GHCR publishing with provenance, SBOM, and cosign; actions pinned to commit SHAs; Dependabot with a 7-day cooldown.
 
 ### Phase 0 — Confirm the foundation and compatibility
 
@@ -724,14 +725,14 @@ Checked boxes below are complete; partially complete items say what remains.
 **Depends on:** phase 0.
 
 - [ ] Establish web, worker, shared contracts, agent, deployment, docs, and fixture directories.
-- [ ] Add formatting, linting, type checking, focused test commands, and CI build checks. _Commands done; CI remains._
-- [ ] Add the release pipeline now (release-please, multi-arch GHCR images, signatures, SBOM) and publish `edge` images from `main`, so v0.1.0 is a tag rather than a project.
+- [x] Add formatting, linting, type checking, focused test commands, and CI build checks (`.github/workflows/ci.yml`: verify, image smoke test, Trivy).
+- [ ] Add the release pipeline now (release-please, multi-arch GHCR images, signatures, SBOM) and publish `edge` images from `main`, so v0.1.0 is a tag rather than a project. _Workflows written and linted; confirm on the first GitHub run._
 - [ ] Run the design pass from section 5.9 and turn it into theme tokens before building screens. _Direction chosen; tokens remain._
 - [ ] Define initial migrations for auth, server/site inventory, jobs, configuration revisions, notifications, and audit records. _Auth migration done; domain tables remain._
 - [ ] Add secret-file support, encryption-key handling, structured logging, and redaction. _Secret resolution (env, `_FILE`, generated 0600 file) done._
 - [ ] Add first administrator bootstrap and protected app shell. _Bootstrap and route guard done; designed shell remains._
 - [ ] Add shared theme tokens, the selected UI components, Lucide icon conventions, and reusable table/chart shells; keep installation versions pinned.
-- [ ] Add initial Dockerfiles/Compose, persistent data volume, private networks, and health endpoints.
+- [ ] Add initial Dockerfiles/Compose, persistent data volume, private networks, and health endpoints. _Done: image (non-root, healthcheck, graceful stop), `compose.yaml`, named volume, `/healthz` and `/readyz`. Private networks arrive with the CrowdSec connection in phase 3._
 - [ ] Define stable component ownership and versioned contract conventions.
 
 **Acceptance gate:** a fresh local installation can be claimed securely, restarted without losing data, and built consistently in CI.
