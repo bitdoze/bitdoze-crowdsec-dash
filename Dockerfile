@@ -21,6 +21,13 @@ RUN npm ci --omit=dev --legacy-peer-deps --ignore-scripts
 
 # Runtime
 FROM node:24-slim AS runtime
+# Apply Debian security updates, and drop npm/corepack: the server never uses
+# them at runtime and their bundled dependencies carry their own advisories.
+RUN apt-get update \
+	&& apt-get upgrade -y --no-install-recommends \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+		/usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 ENV NODE_ENV=production \
 	DATA_DIR=/data \
 	HOST=0.0.0.0 \
