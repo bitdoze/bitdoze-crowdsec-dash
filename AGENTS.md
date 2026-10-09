@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Start with `HANDOFF.md`: current state, owner decisions, and the next steps in order.
+
 ## Commands
 
 - `npm ci` — install (clean install must pass; no `--legacy-peer-deps`)
