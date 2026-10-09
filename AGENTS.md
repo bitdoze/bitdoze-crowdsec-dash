@@ -19,6 +19,7 @@ Start with `HANDOFF.md`: current state, owner decisions, and the next steps in o
 - `npm run auth:schema` — regenerate `src/lib/server/db/auth.schema.ts` from `auth.ts` (run after changing Better Auth options/plugins, then `db:generate`)
 - `npm run recover -- <email>` — emergency account recovery against `DATA_DIR`: resets the password (prints it once), clears 2FA, sessions, ban, and login throttle
 - `node server/agent.js` — host agent (tier D). Env: `AGENT_SOCKET` (default `/run/bitdoze-agent.sock`), `AGENT_TOKEN` (required to do anything), `AGENT_CSCLI` (`local` or `docker:<container>`), `AGENT_FILE_ROOTS` (colon-separated writable roots), `AGENT_BACKUP_DIR`, `AGENT_SERVICES` (comma-separated `systemd:<unit>`/`docker:<container>` targets — allowlist for `service.reload` and `proxy.validate` ops; add `systemd:caddy`/`docker:nginx` etc. to enable native `caddy validate`/`nginx -t` before managed reloads), `AGENT_DOCKER=1` (enables the read-only `docker.ps`/`docker.inspect` ops — implied when `AGENT_CSCLI` is `docker:<container>`). Point the dashboard at it with `AGENT_SOCKET` + `AGENT_TOKEN` in its env. See the commented `agent` service in `compose.yaml`.
+- `/edge` — Cloudflare edge enforcement (phase 10). Token → encrypted `cloudflare_account` + discovered `cloudflare_zone`s → adopt-or-create one `crowdsec_dash_*` IP list → per-zone managed WAF custom rules (`ref: crowdsec-dash-edge`) → serialized `cloudflare.sync` jobs diffing the local decision projection into the list. `CF_API_BASE` overrides the API base URL (tests/mocks only).
 
 ## Conventions
 

@@ -170,6 +170,19 @@ Verified: `check` 0/0, lint clean, `npm test` 177, `npm run build`, full e2e 42+
 
 **Not yet:** captcha remediation needs bouncers that answer captcha — flagged capability-gated in the artifact. Multi-series charts (legends) don't exist yet; every chart is single-series with a data-table alternative.
 
+## Phase 10 (Cloudflare edge) — core done, on `main`
+
+- **Account model (migration 0008):** `cloudflare_account` (label, `cfAccountId`, `tokenEnc` symmetricEncrypt'd, token status, verified permission groups, list state: `listId`/`listName`/`listOwned`, `listItemCount`, `listDropped`, `lastSync*` fields) + `cloudflare_zone` (account FK, `zoneId`, plan, `selected`, `hostnames` JSON, `action` block|challenge, `ruleId`, `rulesInUse`).
+- **API client (`cloudflare/client.ts`):** typed CF v4 envelope, `CfError` carries status/code/Retry-After, injectable `fetch`/`baseUrl`; `CF_API_BASE` env overrides the base (tests/mocks only). Client covers verify/zones/lists CRUD/list-items cursor/bulk update/bulk-op poll/custom-rulesets.
+- **Lifecycle (`accounts.ts`):** `connectAccount` verifies first (inactive tokens rejected), encrypts, discovers + upserts zones (operator selections survive re-discovery); `ensureList` adopts a compatible `crowdsec_dash_*` or creates one; `applyZoneRule`/`removeZoneRule` merge into the zone custom-rules ruleset by `ref: crowdsec-dash-edge` (other rules preserved); `uninstallEdge` removes rules before the list — and only deletes lists we own; `disconnectAccount` refuses while managed resources remain.
+- **Sync (`edge-sync.ts` + `cloudflare.sync` job):** local-origin decisions only (`crowdsec`, `cscli`, `crowdsec-appsec` — never the blocklist), deduped, capacity-trimmed keeping latest expiries (`listDropped` reports overflow), diffed against live items, one serialized bulk update with 429 retry-after backoff + operation polling; CF items never expire so removals come from the same diff — the list goes stale, not empty, when the dashboard stops. Worker enqueues on new alerts / 15-min reconcile / 2-min debounce; idempotency `edge-sync:<id>`, lock `cloudflare:<id>`.
+- **Deviation from spec:** sync reads the local `decision` projection rather than a registered `cscli` bouncer key + `/v1/decisions/stream` — same data, one less credential; the account does not appear in `cscli bouncers list`.
+- **UI:** `/edge` nav page — connect form (permission guidance), token stamp + permission chips, decision-list card (item count, owned/adopted, sync state + error, stale badge), zones table (opt-in checkbox, hostname narrowing, block|challenge, rule-installed stamp), sync-now/uninstall/disconnect actions, honest About module (no AppSec at the edge, cache-hit visibility, list-staleness semantics).
+
+Verified: `check` 0/0, `npm test` 190, build, `e2e/edge.spec.ts` green incl. CF-side rule-expression assertions and the bad-token path.
+
+**Not yet:** Worker-bouncer mode (documented only), observe-only rule action, per-route mapping, real-account validation (token revocation, quota, propagation).
+
 ## Actions only the owner can take
 
 1. GitHub → Settings → Actions → General → enable **"Allow GitHub Actions to create and approve pull requests"**. Release-please fails without it (latest Release run: "GitHub Actions is not permitted to create or approve pull requests").
@@ -183,11 +196,11 @@ Verified: `check` 0/0, lint clean, `npm test` 177, `npm run build`, full e2e 42+
 
 - All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 
-### 2. Real-host validation for phases 7–8, then Phase 10 (v0.8.0): Cloudflare edge integration
+### 2. Real-host validation for phases 7–10, then Phase 11 (v0.9.0): notifications & operational tools
 
-Phases 7–9 are on `main` with stub-driven e2e; real validation needs a Docker host with the agent (`AGENT_DOCKER=1`, `AGENT_SERVICES` including the proxy targets): deploy the demo compose, run adopt→apply→validate→reload per proxy, exercise bypass/recreation/failure paths, then walk a site through WAF levels 3→4 against real CRS alerts. Phase 10 adds the Cloudflare Free-plan edge mode (token validation, zone discovery, IP list + custom rule, serialized writes, ownership-safe uninstall).
+Phases 7–10 are on `main` with stub-driven e2e; real validation needs a Docker host with the agent (`AGENT_DOCKER=1`, `AGENT_SERVICES` including the proxy targets) — deploy the demo compose, run adopt→apply→validate→reload per proxy, exercise bypass/recreation/failure paths, walk a site through WAF levels 3→4 against real CRS alerts — plus a Cloudflare account with a test zone for the real edge lifecycle (token revocation, quota, propagation delay, adopt-existing-list). Phase 11 completes notifications and operational tooling (digests, retries, backup/restore, update workflow).
 
-Later phases (10–13) are fully described in the spec.
+Later phases (11–13) are fully described in the spec.
 
 ## Gotchas already learned
 

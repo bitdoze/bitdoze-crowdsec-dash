@@ -489,3 +489,71 @@ export const savedView = sqliteTable(
 	},
 	(table) => [index('savedView_page_idx').on(table.page)]
 );
+
+/**
+ * A connected Cloudflare account (spec §6.3). One row per admin-added
+ * token; the token itself lives only in `tokenEnc` (symmetricEncrypt'd).
+ * The account-level IP list is one-per-account, so its state is stored
+ * here; per-zone state lives in `cloudflare_zone`.
+ */
+export const cloudflareAccount = sqliteTable('cloudflare_account', {
+	id: text('id').primaryKey(),
+	/** Operator label, e.g. "personal". */
+	name: text('name').notNull(),
+	/** CF account id — learned from zone discovery; '' until known. */
+	cfAccountId: text('cf_account_id').notNull().default(''),
+	tokenEnc: text('token_enc').notNull(),
+	/** Last verify() outcome: active | disabled | expired | error. */
+	tokenStatus: text('token_status'),
+	/** JSON array of permission-group names from the last verify. */
+	permissions: text('permissions'),
+	verifiedAt: integer('verified_at', { mode: 'timestamp_ms' }),
+	lastError: text('last_error'),
+	/** Managed/adopted account-level IP list. */
+	listId: text('list_id'),
+	listName: text('list_name'),
+	/** true = we created it (uninstall may delete); false = adopted. */
+	listOwned: integer('list_owned', { mode: 'boolean' }).default(false).notNull(),
+	listItemCount: integer('list_item_count'),
+	/** Decisions dropped on the last sync for capacity. */
+	listDropped: integer('list_dropped').default(0).notNull(),
+	lastSyncAt: integer('last_sync_at', { mode: 'timestamp_ms' }),
+	lastSyncState: text('last_sync_state', { enum: ['ok', 'degraded', 'failed'] }),
+	lastSyncError: text('last_sync_error'),
+	createdAt: integer('created_at', { mode: 'timestamp_ms' })
+		.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+		.notNull()
+});
+
+/**
+ * A Cloudflare zone under a connected account. The dashboard only
+ * touches zones the operator explicitly selects; `ruleId` records the
+ * managed WAF custom rule this installation owns.
+ */
+export const cloudflareZone = sqliteTable(
+	'cloudflare_zone',
+	{
+		id: text('id').primaryKey(),
+		accountId: text('account_id')
+			.notNull()
+			.references(() => cloudflareAccount.id, { onDelete: 'cascade' }),
+		zoneId: text('zone_id').notNull(),
+		name: text('name').notNull(),
+		plan: text('plan'),
+		/** Operator opted this zone into edge enforcement. */
+		selected: integer('selected', { mode: 'boolean' }).default(false).notNull(),
+		/** JSON array; empty = whole zone. */
+		hostnames: text('hostnames').notNull().default('[]'),
+		action: text('action', { enum: ['block', 'challenge'] })
+			.default('block')
+			.notNull(),
+		/** The managed rule's id inside the zone's custom-rules ruleset. */
+		ruleId: text('rule_id'),
+		/** Custom rules observed in use (Free plan allows 5/zone). */
+		rulesInUse: integer('rules_in_use'),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' })
+			.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+			.notNull()
+	},
+	(table) => [index('cfZone_account_idx').on(table.accountId)]
+);

@@ -20,6 +20,7 @@
 	import Sun from '@lucide/svelte/icons/sun';
 	import Moon from '@lucide/svelte/icons/moon';
 	import Monitor from '@lucide/svelte/icons/monitor';
+	import Cloud from '@lucide/svelte/icons/cloud';
 	import type { LayoutProps } from './$types';
 	import Wordmark from '#lib/components/Wordmark.svelte';
 	import Sheet from '#lib/components/Sheet.svelte';
@@ -116,6 +117,13 @@
 			icon: Activity,
 			href: resolve('/(app)/system'),
 			active: page.url.pathname.startsWith('/system')
+		},
+		{
+			id: 'edge',
+			label: 'Edge',
+			icon: Cloud,
+			href: resolve('/(app)/edge'),
+			active: page.url.pathname.startsWith('/edge')
 		},
 		{
 			id: 'settings',

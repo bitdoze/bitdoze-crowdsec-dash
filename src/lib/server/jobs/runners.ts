@@ -7,6 +7,8 @@ import { asc, eq } from 'drizzle-orm';
 import type { db } from '#lib/server/db/index.ts';
 import { configArtifact, jobStep, type job } from '#lib/server/db/app.schema.ts';
 import { callAgent } from '#lib/server/agent/client.ts';
+import { ensureList } from '#lib/server/cloudflare/accounts.ts';
+import { syncEdgeList } from '#lib/server/cloudflare/edge-sync.ts';
 
 type Database = typeof db;
 type JobRow = typeof job.$inferSelect;
@@ -115,6 +117,34 @@ export const RUNNERS: Record<string, Runner> = {
 				{
 					name: `remove ${value} from ${name}`,
 					run: () => call('allowlist.remove', { name, value })
+				}
+			];
+		}
+	},
+
+	/**
+	 * Reconcile a Cloudflare account's IP list with the decision table.
+	 * One serialized write path per account (lock key cloudflare:<id>) —
+	 * the sync step diffs live list state so any interleaving is safe.
+	 */
+	'cloudflare.sync': {
+		plan: (params) => {
+			const accountId = String(params.accountId ?? '');
+			if (!/^[0-9a-f-]{36}$/i.test(accountId)) bad('invalid accountId');
+			return [
+				{
+					name: 'ensure edge list',
+					run: async () => {
+						const list = await ensureList(accountId);
+						return `list ${list.name} (${list.id})`;
+					}
+				},
+				{
+					name: 'sync edge list',
+					run: async () => {
+						const r = await syncEdgeList(accountId);
+						return `${r.items} items (+${r.added} −${r.removed}${r.dropped ? `, ${r.dropped} over capacity` : ''})`;
+					}
 				}
 			];
 		}

@@ -18,12 +18,45 @@ import { reconcile } from './decisions.ts';
 import { dispatchOutbox } from '#lib/server/notify/deliver.ts';
 import { recordEvent } from '#lib/server/notify/core.ts';
 import { runSiteChecks } from '#lib/server/protect/checks.ts';
-import { drainJobs } from '#lib/server/jobs/queue.ts';
-import { site, syncState } from '#lib/server/db/app.schema.ts';
+import { drainJobs, enqueue } from '#lib/server/jobs/queue.ts';
+import { cloudflareAccount, site, syncState } from '#lib/server/db/app.schema.ts';
 
 export const SYNC_INTERVAL_MS = 30_000;
 /** Automated protection checks re-run once an hour — cheap projection reads. */
 const CHECKS_EVERY_MS = 3_600_000;
+/** Edge lists fully reconcile every 15 min; fresher syncs happen on change. */
+const EDGE_RECONCILE_MS = 15 * 60_000;
+/** Don't re-enqueue an edge sync fresher than this without new alerts. */
+const EDGE_DEBOUNCE_MS = 120_000;
+
+/**
+ * Enqueue a `cloudflare.sync` job for every active account that has a
+ * list or selected zones. Idempotency keys collapse overlapping ticks;
+ * the job itself diffs live list state, so bursts are harmless.
+ */
+async function maybeEnqueueEdgeSync(freshAlerts: boolean) {
+	const accounts = await db
+		.select({
+			id: cloudflareAccount.id,
+			tokenStatus: cloudflareAccount.tokenStatus,
+			listId: cloudflareAccount.listId,
+			lastSyncAt: cloudflareAccount.lastSyncAt
+		})
+		.from(cloudflareAccount);
+	const now = Date.now();
+	for (const a of accounts) {
+		if (a.tokenStatus !== 'active' && !a.listId) continue;
+		const age = a.lastSyncAt ? now - a.lastSyncAt.getTime() : Infinity;
+		const due = age > EDGE_RECONCILE_MS || freshAlerts;
+		if (!due || age < EDGE_DEBOUNCE_MS) continue;
+		await enqueue(db, {
+			kind: 'cloudflare.sync',
+			params: { accountId: a.id },
+			idempotencyKey: `edge-sync:${a.id}`,
+			lockKey: `cloudflare:${a.id}`
+		});
+	}
+}
 
 let started = false;
 let running = false;
@@ -89,6 +122,9 @@ async function tick() {
 			try {
 				const result = await syncAlerts(db, client);
 				await reportOutcome('alerts', null, `${result.stored} alerts stored`, !!hadError);
+				await maybeEnqueueEdgeSync(result.stored > 0).catch((e) =>
+					console.error('edge sync enqueue failed:', e)
+				);
 				if (result.stored > 0) {
 					const hour = new Date().toISOString().slice(0, 13);
 					await recordEvent(db, {

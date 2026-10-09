@@ -17,7 +17,7 @@ export default defineConfig({
 	reporter: process.env.CI ? 'github' : 'list',
 	webServer: [
 		{
-			command: `ORIGIN=${baseURL} DATA_DIR=.e2e-data SETUP_TOKEN=e2e-setup-token DEMO_FIXTURES=true SYNC_INTERVAL_MS=2000 AGENT_SOCKET=.e2e-data/agent.sock AGENT_TOKEN=e2e-agent-token HOST=127.0.0.1 PORT=${port} node server/index.js`,
+			command: `ORIGIN=${baseURL} DATA_DIR=.e2e-data SETUP_TOKEN=e2e-setup-token DEMO_FIXTURES=true SYNC_INTERVAL_MS=2000 AGENT_SOCKET=.e2e-data/agent.sock AGENT_TOKEN=e2e-agent-token CF_API_BASE=http://127.0.0.1:8091 HOST=127.0.0.1 PORT=${port} node server/index.js`,
 			url: `${baseURL}/healthz`,
 			reuseExistingServer: !process.env.CI,
 			timeout: 30_000
@@ -25,6 +25,12 @@ export default defineConfig({
 		{
 			command: 'node e2e/mock-lapi.mjs',
 			url: 'http://127.0.0.1:8090/v1/metrics',
+			reuseExistingServer: !process.env.CI,
+			timeout: 15_000
+		},
+		{
+			command: 'node e2e/mock-cf.mjs',
+			url: 'http://127.0.0.1:8091/_state',
 			reuseExistingServer: !process.env.CI,
 			timeout: 15_000
 		}

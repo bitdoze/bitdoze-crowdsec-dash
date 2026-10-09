@@ -47,5 +47,10 @@ export const variables = defineEnvVars({
 		description:
 			'Shared token the dashboard presents to the host agent on connect. `AGENT_TOKEN_FILE` may point to a file containing it instead.',
 		schema: (value) => value
+	},
+	CF_API_BASE: {
+		description:
+			'Override the Cloudflare API v4 base URL — for tests/staging mocks only. Defaults to https://api.cloudflare.com/client/v4.',
+		schema: (value) => value
 	}
 });
