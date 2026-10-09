@@ -10,9 +10,12 @@ import { requirePermission } from '#lib/server/roles.ts';
 import { recordAudit } from '#lib/server/audit.ts';
 import { hasPermission } from '#lib/roles.ts';
 import { isPrivateIp, normalizeTarget, parseDuration } from '#lib/ipaddr.ts';
+import { agentHello } from '#lib/server/agent/client.ts';
+import { enqueue } from '#lib/server/jobs/queue.ts';
 
 export const load: PageServerLoad = async (event) => {
 	const srv = await getServer(db);
+	const hello = await agentHello();
 	const freshness = await projectionFreshness(db);
 	const list = await listDecisions(db, {
 		q: event.url.searchParams.get('q') ?? undefined,
@@ -38,6 +41,7 @@ export const load: PageServerLoad = async (event) => {
 		list,
 		requests,
 		clientIp: { value: clientIp, private: isPrivateIp(clientIp) },
+		agentCscli: !!hello?.caps.cscli,
 		filters: {
 			q: event.url.searchParams.get('q') ?? '',
 			expired: event.url.searchParams.get('expired') === '1'
@@ -118,6 +122,39 @@ export const actions: Actions = {
 				],
 				code: `sudo cscli allowlists create dashboard-admin --description "dashboard admin ip"\nsudo cscli allowlists add dashboard-admin ${ip}\nsudo systemctl reload crowdsec`
 			}
+		};
+	},
+
+	/** Tier D variant: run the same allowlist write through the agent. */
+	allowlistMeAgent: async (event) => {
+		const user = requirePermission(event, 'operate');
+		const hello = await agentHello(true);
+		if (!hello?.caps.cscli) {
+			return fail(400, { message: 'Host agent with a cscli bridge is not connected.' });
+		}
+		const ip = event.getClientAddress();
+		if (normalizeTarget(ip)?.scope !== 'ip')
+			return fail(400, { message: `Refusing to allowlist ${ip} — not a valid IP.` });
+		const { created } = await enqueue(db, {
+			kind: 'allowlist.add',
+			params: {
+				name: 'dashboard-admin',
+				description: 'dashboard admin ip',
+				values: [ip]
+			},
+			idempotencyKey: `allowlist.add:dashboard-admin:${ip}`,
+			lockKey: 'allowlists',
+			createdBy: user.id
+		});
+		await recordAudit({
+			event,
+			action: 'job.enqueued',
+			detail: { kind: 'allowlist.add', value: ip }
+		});
+		return {
+			notice: created
+				? `Queued: allowlist ${ip} via the agent — watch System → Jobs.`
+				: `${ip} is already queued for allowlisting.`
 		};
 	}
 };

@@ -164,11 +164,17 @@
 		</Module>
 	</div>
 
-	<Module title="Generated artifacts — guided, not applied">
+	<Module title={data.agent ? 'Generated artifacts' : 'Generated artifacts — guided, not applied'}>
 		<p class="mb-3 text-xs text-ink-3">
-			Copy each artifact to the host and apply it yourself. Mark it applied afterwards; a passing
-			verification check promotes it to verified. Regenerating with different answers resets changed
-			artifacts to not applied.
+			{#if data.agent}
+				Complete-file artifacts can be applied through the host agent (backup + write); fragments
+				stay manual. Otherwise
+			{:else}
+				No host agent connected —
+			{/if}
+			copy each artifact to the host and apply it yourself. Mark it applied afterwards; a passing verification
+			check promotes it to verified. Regenerating with different answers resets changed artifacts to not
+			applied.
 		</p>
 		<div class="space-y-4">
 			{#each data.artifacts as a (a.id)}
@@ -182,6 +188,17 @@
 						<div class="flex items-center gap-2">
 							<Stamp state={artifactState[a.state]} label={artifactLabel[a.state]} />
 							{#if data.canOperate}
+								{#if a.kind === 'collections' && data.agent?.caps.cscli}
+									<form method="post" action="?/installCollections">
+										<Button variant="secondary" size="sm" type="submit">Install via agent</Button>
+									</form>
+								{/if}
+								{#if a.managed && a.target}
+									<form method="post" action="?/applyArtifact">
+										<input type="hidden" name="artifactId" value={a.id} />
+										<Button variant="secondary" size="sm" type="submit">Apply via agent</Button>
+									</form>
+								{/if}
 								<form method="post" action="?/artifactState">
 									<input type="hidden" name="artifactId" value={a.id} />
 									<input

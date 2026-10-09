@@ -17,7 +17,7 @@ export default defineConfig({
 	reporter: process.env.CI ? 'github' : 'list',
 	webServer: [
 		{
-			command: `ORIGIN=${baseURL} DATA_DIR=.e2e-data SETUP_TOKEN=e2e-setup-token DEMO_FIXTURES=true SYNC_INTERVAL_MS=2000 HOST=127.0.0.1 PORT=${port} node server/index.js`,
+			command: `ORIGIN=${baseURL} DATA_DIR=.e2e-data SETUP_TOKEN=e2e-setup-token DEMO_FIXTURES=true SYNC_INTERVAL_MS=2000 AGENT_SOCKET=.e2e-data/agent.sock AGENT_TOKEN=e2e-agent-token HOST=127.0.0.1 PORT=${port} node server/index.js`,
 			url: `${baseURL}/healthz`,
 			reuseExistingServer: !process.env.CI,
 			timeout: 30_000

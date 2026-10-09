@@ -10,6 +10,8 @@ import { probeSite } from '#lib/server/protect/detect.ts';
 import { listArtifacts, markArtifact, regeneratePlan } from '#lib/server/protect/plan.ts';
 import { CHECKS, listChecks, markTestWindow, runSiteChecks } from '#lib/server/protect/checks.ts';
 import { TEST_PATH } from '#lib/server/protect/templates.ts';
+import { agentHello } from '#lib/server/agent/client.ts';
+import { enqueue } from '#lib/server/jobs/queue.ts';
 
 const PROXIES = ['caddy', 'traefik', 'nginx', 'other', 'unknown'] as const;
 const RUNTIMES = ['native', 'docker', 'unknown'] as const;
@@ -22,11 +24,24 @@ async function loadSite(id: string) {
 
 export const load: PageServerLoad = async (event) => {
 	const s = await loadSite(event.params.id);
-	const [artifacts, checks] = await Promise.all([listArtifacts(db, s.id), listChecks(db, s.id)]);
+	const [artifacts, checks, hello] = await Promise.all([
+		listArtifacts(db, s.id),
+		listChecks(db, s.id),
+		agentHello()
+	]);
+	// Managed apply is offered only for complete-file artifacts that declare
+	// a `# /path` target line — fragments (Caddyfile snippets, compose
+	// blocks) stay guided because merging is a per-host decision.
+	const MANAGED_KINDS = new Set(['acquisition']);
 	return {
 		site: s,
 		detection: s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : null,
-		artifacts,
+		artifacts: artifacts.map((a) => ({
+			...a,
+			target: a.content.match(/^# (\/\S+)$/m)?.[1] ?? null,
+			managed: !!hello?.caps.files && MANAGED_KINDS.has(a.kind)
+		})),
+		agent: hello,
 		checkDefs: CHECKS,
 		checks: checks.map((c) => ({ ...c, evidence: c.evidence ? JSON.parse(c.evidence) : null })),
 		testPath: TEST_PATH,
@@ -143,5 +158,72 @@ export const actions: Actions = {
 				}
 			});
 		return { notice: 'Real-IP check marked verified.' };
+	},
+
+	/** Tier D: install the plan's hub items through the agent as a job. */
+	installCollections: async (event) => {
+		const user = requirePermission(event, 'operate');
+		const s = await loadSite(event.params.id);
+		const hello = await agentHello(true);
+		if (!hello?.caps.cscli) return { notice: 'Agent with a cscli bridge is not connected.' };
+		const [collections] = (await listArtifacts(db, s.id)).filter((a) => a.kind === 'collections');
+		if (!collections) return { notice: 'No collections artifact for this site.' };
+		const items = [
+			...collections.content.matchAll(
+				/cscli (collections|parsers|scenarios|contexts|appsec-rules) install (\S+)/g
+			)
+		].map((m) => `${m[1]}:${m[2]}`);
+		if (!items.length) return { notice: 'No installable items found in the artifact.' };
+		const { created } = await enqueue(db, {
+			kind: 'hub.install',
+			params: { items },
+			idempotencyKey: `hub.install:${collections.id}:${collections.contentHash}`,
+			lockKey: 'hub',
+			siteId: s.id,
+			createdBy: user.id
+		});
+		await recordAudit({
+			event,
+			action: 'job.enqueued',
+			detail: { kind: 'hub.install', hostname: s.hostname, items: items.length }
+		});
+		return {
+			notice: created
+				? `Queued install of ${items.length} hub items — watch System → Jobs.`
+				: 'That install is already queued for this artifact version.'
+		};
+	},
+
+	/** Tier D: managed apply of a complete-file artifact (backup → write → reload). */
+	applyArtifact: async (event) => {
+		const user = requirePermission(event, 'operate');
+		const s = await loadSite(event.params.id);
+		const hello = await agentHello(true);
+		if (!hello?.caps.files) return { notice: 'Agent file access is not configured.' };
+		const formData = await event.request.formData();
+		const artifactId = text(formData, 'artifactId');
+		const [a] = (await listArtifacts(db, s.id)).filter((x) => x.id === artifactId);
+		const target = a?.content.match(/^# (\/\S+)$/m)?.[1];
+		if (!a || a.kind !== 'acquisition' || !target)
+			return { notice: 'Only complete-file artifacts with a declared target can be applied.' };
+		const { created, job: j } = await enqueue(db, {
+			kind: 'config.apply',
+			// artifactId lets the job mark the artifact applied only on success.
+			params: { path: target, content: a.content, artifactId: a.id },
+			idempotencyKey: `apply:${a.id}:${a.contentHash}`,
+			lockKey: `file:${target}`,
+			siteId: s.id,
+			createdBy: user.id
+		});
+		await recordAudit({
+			event,
+			action: 'job.enqueued',
+			detail: { kind: 'config.apply', hostname: s.hostname, path: target, jobId: j.id }
+		});
+		return {
+			notice: created
+				? `Queued managed apply to ${target} — backup + write via the agent.`
+				: 'That artifact version is already applied or queued.'
+		};
 	}
 };

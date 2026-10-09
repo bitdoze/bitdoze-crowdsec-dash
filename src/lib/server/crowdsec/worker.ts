@@ -18,6 +18,7 @@ import { reconcile } from './decisions.ts';
 import { dispatchOutbox } from '#lib/server/notify/deliver.ts';
 import { recordEvent } from '#lib/server/notify/core.ts';
 import { runSiteChecks } from '#lib/server/protect/checks.ts';
+import { drainJobs } from '#lib/server/jobs/queue.ts';
 import { site, syncState } from '#lib/server/db/app.schema.ts';
 
 export const SYNC_INTERVAL_MS = 30_000;
@@ -72,8 +73,12 @@ async function tick() {
 	running = true;
 	try {
 		// Deliveries must run even while disconnected — audit/admin events
-		// still need their channels.
+		// still need their channels. Durable jobs drain the same way — they
+		// may not need CrowdSec at all (agent ops).
 		await dispatchOutbox(db).catch((e) => console.error('outbox dispatch failed:', e));
+		await drainJobs(db, `worker-${process.pid}`).catch((e) =>
+			console.error('job drain failed:', e)
+		);
 
 		const serverRow = await getServer(db);
 		if (!serverRow.connected) return;

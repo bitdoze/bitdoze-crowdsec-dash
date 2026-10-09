@@ -53,10 +53,13 @@ test('connects to the mock LAPI and syncs the projection', async ({ page }) => {
 });
 
 test('alerts page lists synced alerts with attribution', async ({ page }) => {
-	await page.goto('/alerts');
+	// Filter straight at the fixture IP — reruns accumulate leftover alerts
+	// that could otherwise push the fixture off page one.
+	await page.goto('/alerts?ip=203.0.113.7');
 	await expect(page.getByRole('heading', { name: 'Alerts' })).toBeVisible();
-	await expect(page.getByRole('link', { name: '203.0.113.7' }).first()).toBeVisible();
+	await expect(page.getByRole('link', { name: '203.0.113.7', exact: true }).first()).toBeVisible();
 	await expect(page.getByRole('link', { name: 'blog.example.com' })).toBeVisible();
+	await page.goto('/alerts');
 	// Persisted manual-decision alerts are also unattributed — match any.
 	await expect(page.getByRole('cell', { name: 'unattributed' }).first()).toBeVisible();
 	// CAPI-only alert must not appear.
@@ -65,13 +68,13 @@ test('alerts page lists synced alerts with attribution', async ({ page }) => {
 
 test('filtering by source IP narrows the log', async ({ page }) => {
 	await page.goto('/alerts?ip=203.0.113.7');
-	await expect(page.getByRole('link', { name: '203.0.113.7' })).toBeVisible();
+	await expect(page.getByRole('link', { name: '203.0.113.7', exact: true })).toBeVisible();
 	await expect(page.getByRole('cell', { name: /198\.51\.100\.23/ })).toBeHidden();
 });
 
 test('decisions page shows active vs expired state', async ({ page }) => {
 	await page.goto('/decisions');
-	await expect(page.getByRole('link', { name: '203.0.113.7' })).toBeVisible();
+	await expect(page.getByRole('link', { name: '203.0.113.7', exact: true })).toBeVisible();
 	// The ssh decision expired in the fixture — hidden unless requested.
 	await expect(page.getByRole('link', { name: '198.51.100.23' })).toBeHidden();
 	await page.goto('/decisions?expired=1');
@@ -79,8 +82,8 @@ test('decisions page shows active vs expired state', async ({ page }) => {
 });
 
 test('IP detail aggregates alerts and decisions for an address', async ({ page }) => {
-	await page.goto('/alerts');
-	await page.getByRole('link', { name: '203.0.113.7' }).first().click();
+	await page.goto('/alerts?ip=203.0.113.7');
+	await page.getByRole('link', { name: '203.0.113.7', exact: true }).first().click();
 	await expect(page).toHaveURL(/\/ip\/203\.0\.113\.7/);
 	await expect(page.getByRole('heading', { name: '203.0.113.7' })).toBeVisible();
 	await expect(page.getByRole('cell', { name: 'http-probing' }).first()).toBeVisible();
@@ -119,10 +122,10 @@ test('outage surfaces a failing state and recovers', async ({ page, request }) =
 	await page.getByRole('button', { name: 'Sync now' }).click();
 	await expect(page.getByRole('alert')).toContainText('LAPI answered 503');
 
-	await page.goto('/alerts');
+	await page.goto('/alerts?ip=203.0.113.7');
 	await expect(page.getByTestId('sync-error')).toContainText('Sync failing');
 	// Cached rows stay visible through the outage.
-	await expect(page.getByRole('link', { name: '203.0.113.7' }).first()).toBeVisible();
+	await expect(page.getByRole('link', { name: '203.0.113.7', exact: true }).first()).toBeVisible();
 
 	await request.get('http://127.0.0.1:8090/_down?set=0');
 	await page.goto('/settings/crowdsec');

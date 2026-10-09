@@ -13,10 +13,12 @@ import {
 	saveConnection
 } from '#lib/server/crowdsec/connection.ts';
 import { scrapeMetrics } from '#lib/server/crowdsec/scrape.ts';
+import { agentConfigured, agentHello } from '#lib/server/agent/client.ts';
 
 export const load: PageServerLoad = async (event) => {
 	requirePermission(event, 'configure');
 	const srv = await getServer(db);
+	const hello = await agentHello();
 	const sync = await db.select().from(syncState);
 	const [alerts] = await db.select({ n: count() }).from(alert);
 	const [decisions] = await db
@@ -85,6 +87,25 @@ export const load: PageServerLoad = async (event) => {
 					? 'cs_appsec_* counters are flowing.'
 					: 'No cs_appsec_* counters seen yet — AppSec may not be deployed.',
 			unlocks: 'WAF processed/blocked/rule-hit counters'
+		},
+		{
+			tier: 'T5',
+			label: 'Host agent (cscli)',
+			state: !agentConfigured()
+				? 'not_configured'
+				: hello
+					? hello.caps.cscli
+						? 'verified'
+						: 'stale'
+					: 'failed',
+			detail: !agentConfigured()
+				? 'Deploy server/agent.js on the CrowdSec host, set AGENT_SOCKET + AGENT_TOKEN.'
+				: !hello
+					? 'Agent configured but unreachable.'
+					: hello.caps.cscli
+						? `cscli via ${hello.caps.cscliMode}; ${hello.caps.roots.length} file root(s), ${hello.caps.services.length} reload target(s).`
+						: 'Agent up but AGENT_CSCLI unset — read/write ops limited.',
+			unlocks: 'Bouncers · hub · allowlist writes · managed applies · jobs'
 		}
 	] as const;
 

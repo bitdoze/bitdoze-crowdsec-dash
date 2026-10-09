@@ -1,0 +1,4 @@
+#!/bin/sh
+# Stub docker for e2e — logs argv, always succeeds.
+echo "docker $*" >> "${AGENT_CALLS_LOG:-/dev/null}"
+exit 0

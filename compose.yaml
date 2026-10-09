@@ -19,5 +19,36 @@ services:
   # bridge address with a matching firewall rule. Never bind them to all
   # interfaces. (See spec section 11.)
 
+  # ── Optional tier-D host agent (managed mode only) ─────────────────────
+  # Runs `node server/agent.js` from the same image. It is the ONLY
+  # component allowed to touch privileged host state — mounting the Docker
+  # socket is host-root equivalent, so keep the agent off public networks
+  # and treat AGENT_TOKEN as a secret. The dashboard reaches it over the
+  # unix socket shared through the `agent-run` volume:
+  #
+  #   dashboard:
+  #     volumes: [..., agent-run:/run/agent]
+  #     environment: { AGENT_SOCKET: /run/agent/bitdoze-agent.sock,
+  #                    AGENT_TOKEN: <same token> }
+  #
+  # agent:
+  #   image: ghcr.io/bitdoze/bitdoze-crowdsec-dash:edge
+  #   command: ['node', 'server/agent.js']
+  #   environment:
+  #     AGENT_SOCKET: /run/agent/bitdoze-agent.sock
+  #     AGENT_TOKEN: ${AGENT_TOKEN:?generate once: openssl rand -hex 32}
+  #     # cscli via `docker exec crowdsec`, or `local` for native installs:
+  #     AGENT_CSCLI: docker:crowdsec
+  #     # comma-separated 'systemd:<unit>' / 'docker:<container>' reload targets:
+  #     AGENT_SERVICES: docker:crowdsec
+  #     # colon-separated writable roots — REQUIRED for managed config applies:
+  #     # AGENT_FILE_ROOTS: /srv/crowdsec-config
+  #   volumes:
+  #     - agent-run:/run/agent
+  #     - /var/run/docker.sock:/var/run/docker.sock   # only for AGENT_CSCLI=docker:* / docker reloads
+  #     # - /etc/crowdsec:/srv/crowdsec-config        # only for file ops
+  #   restart: unless-stopped
+
 volumes:
   csdash-data:
+  # agent-run:

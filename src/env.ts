@@ -37,5 +37,15 @@ export const variables = defineEnvVars({
 		description:
 			'Set to `true` to serve clearly labeled fixture data on the overview outside development (e2e, reviews). Dev mode always enables fixtures. Never set in real deployments.',
 		schema: (value) => value
+	},
+	AGENT_SOCKET: {
+		description:
+			'Unix socket path of the optional host agent (tier D). Unset = agent features unavailable.',
+		schema: (value) => value
+	},
+	AGENT_TOKEN: {
+		description:
+			'Shared token the dashboard presents to the host agent on connect. `AGENT_TOKEN_FILE` may point to a file containing it instead.',
+		schema: (value) => value
 	}
 });

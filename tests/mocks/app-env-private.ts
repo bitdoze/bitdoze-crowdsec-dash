@@ -18,3 +18,11 @@ export const SETUP_TOKEN = process.env.SETUP_TOKEN;
 export const MIGRATIONS_DIR = process.env.MIGRATIONS_DIR;
 export const DEMO_FIXTURES = process.env.DEMO_FIXTURES;
 export const TRUSTED_PROXIES = process.env.TRUSTED_PROXIES;
+
+// Agent tests bind a real unix socket under a per-worker tmp dir.
+const agentDir = mkdtempSync(join(tmpdir(), 'csdash-agent-'));
+process.env.AGENT_SOCKET ??= join(agentDir, 'agent.sock');
+process.env.AGENT_TOKEN ??= 'test-agent-token';
+export const AGENT_DIR = agentDir;
+export const AGENT_SOCKET = process.env.AGENT_SOCKET;
+export const AGENT_TOKEN = process.env.AGENT_TOKEN;

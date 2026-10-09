@@ -54,9 +54,10 @@ test('manual ban pushes, confirms on sync, then unban reconciles', async ({ page
 		page.getByRole('status').filter({ hasText: `Ban requested for ${ip}` })
 	).toBeVisible();
 
-	// Requested, awaiting projection confirmation.
+	// Pushed upstream, awaiting projection confirmation — the 2s worker tick
+	// can confirm it before we look, so accept either state.
 	const requestRow = page.getByRole('row', { name: ipRe }).first();
-	await expect(requestRow.getByText('Pushed')).toBeVisible();
+	await expect(requestRow.getByText(/Pushed|Confirmed/)).toBeVisible();
 
 	// Sync pulls the pushed alert back → confirmed.
 	await page.goto('/settings/crowdsec');

@@ -37,7 +37,15 @@
 		isMac = /mac/i.test(navigator.platform);
 	});
 
-	const nav = $derived([
+	interface NavItem {
+		id: string;
+		label: string;
+		icon: typeof Activity;
+		href?: string;
+		active?: boolean;
+		planned?: boolean;
+	}
+	const nav: NavItem[] = $derived([
 		{
 			id: 'overview',
 			label: 'Overview',
@@ -80,7 +88,13 @@
 			href: resolve('/(app)/notifications'),
 			active: page.url.pathname.startsWith('/notifications')
 		},
-		{ id: 'system', label: 'System', icon: Activity, planned: true as const },
+		{
+			id: 'system',
+			label: 'System',
+			icon: Activity,
+			href: resolve('/(app)/system'),
+			active: page.url.pathname.startsWith('/system')
+		},
 		{
 			id: 'settings',
 			label: 'Settings',
@@ -137,6 +151,7 @@
 			label: 'Go to Protection',
 			action: () => goto(resolve('/(app)/protection'))
 		},
+		{ id: 'go-system', label: 'Go to System', action: () => goto(resolve('/(app)/system')) },
 		{ id: 'search-ip', label: 'Search by IP address', hint: 'v0.1.0', disabled: true },
 		...nav
 			.filter((item) => item.planned)
@@ -186,6 +201,8 @@
 							<span class="text-xs">Planned</span>
 						</span>
 					{:else}
+						<!-- hrefs are produced by resolve() in the nav array above -->
+						<!-- eslint-disable svelte/no-navigation-without-resolve -->
 						<a
 							href={item.href}
 							aria-current={item.active ? 'page' : undefined}
@@ -199,6 +216,7 @@
 							<Icon size={15} strokeWidth={1.75} aria-hidden="true" />
 							{item.label}
 						</a>
+						<!-- eslint-enable svelte/no-navigation-without-resolve -->
 					{/if}
 				</li>
 			{/each}

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { user } from './auth.schema.ts';
 
 /**
@@ -378,4 +378,75 @@ export const notificationOutbox = sqliteTable(
 		index('outbox_state_idx').on(table.state, table.nextRetryAt),
 		index('outbox_notification_idx').on(table.notificationId)
 	]
+);
+
+/**
+ * Durable job — a queued unit of privileged work (agent ops, managed
+ * config applies). States per spec §10. `lockKey` serializes jobs on the
+ * same resource; `idempotencyKey` dedupes submissions; `lease*` reclaims
+ * work abandoned by a crashed worker.
+ */
+export const job = sqliteTable(
+	'job',
+	{
+		id: text('id').primaryKey(),
+		kind: text('kind').notNull(), // runner registry key — see jobs/runners.ts
+		params: text('params').notNull(), // JSON, validated by the runner before use
+		state: text('state', {
+			enum: [
+				'queued',
+				'running',
+				'succeeded',
+				'failed',
+				'cancel_requested',
+				'cancelled',
+				'rollback_running',
+				'rollback_failed'
+			]
+		})
+			.default('queued')
+			.notNull(),
+		/** Unique submission key — re-submitting returns the existing row. */
+		idempotencyKey: text('idempotency_key'),
+		/** Resource lock: only one active job may hold a given key. */
+		lockKey: text('lock_key'),
+		siteId: text('site_id').references(() => site.id, { onDelete: 'set null' }),
+		attempts: integer('attempts').default(0).notNull(),
+		leaseUntil: integer('lease_until', { mode: 'timestamp_ms' }),
+		leasedBy: text('leased_by'),
+		/** Redacted outcome summary or error. */
+		result: text('result'),
+		createdBy: text('created_by'),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+		startedAt: integer('started_at', { mode: 'timestamp_ms' }),
+		finishedAt: integer('finished_at', { mode: 'timestamp_ms' })
+	},
+	(table) => [
+		index('job_state_idx').on(table.state, table.createdAt),
+		index('job_lock_idx').on(table.lockKey, table.state),
+		index('job_lease_idx').on(table.leaseUntil),
+		uniqueIndex('job_idempotency_idx').on(table.idempotencyKey)
+	]
+);
+
+/** One row per recorded step — step outcomes make retries resumable. */
+export const jobStep = sqliteTable(
+	'job_step',
+	{
+		id: text('id').primaryKey(),
+		jobId: text('job_id')
+			.notNull()
+			.references(() => job.id, { onDelete: 'cascade' }),
+		idx: integer('idx').notNull(),
+		name: text('name').notNull(),
+		state: text('state', {
+			enum: ['pending', 'running', 'succeeded', 'failed', 'skipped']
+		}).notNull(),
+		/** Redacted evidence — bounded size, secrets scrubbed. */
+		detail: text('detail'),
+		startedAt: integer('started_at', { mode: 'timestamp_ms' }),
+		finishedAt: integer('finished_at', { mode: 'timestamp_ms' })
+	},
+	(table) => [index('job_step_job_idx').on(table.jobId, table.idx)]
 );

@@ -1,0 +1,255 @@
+<script lang="ts">
+	import type { PageProps } from './$types';
+	import Module from '#lib/components/Module.svelte';
+	import Stamp from '#lib/components/Stamp.svelte';
+	import Button from '#lib/components/Button.svelte';
+
+	let { data, form }: PageProps = $props();
+
+	const jobStamp: Record<string, 'verified' | 'stale' | 'failed' | 'not_configured'> = {
+		queued: 'not_configured',
+		running: 'stale',
+		succeeded: 'verified',
+		failed: 'failed',
+		cancel_requested: 'stale',
+		cancelled: 'not_configured',
+		rollback_running: 'stale',
+		rollback_failed: 'failed'
+	};
+	const fmt = (ms: number | null | Date) => (ms ? new Date(ms).toLocaleString() : '—');
+	const kv = (row: unknown, keys: string[]) => {
+		if (!row || typeof row !== 'object') return '—';
+		const r = row as Record<string, unknown>;
+		for (const k of keys) if (r[k] !== undefined && r[k] !== null) return String(r[k]);
+		return '—';
+	};
+</script>
+
+<svelte:head><title>System · CrowdSec Dash</title></svelte:head>
+
+<div class="space-y-5">
+	<header class="border-b border-rule-strong pb-4">
+		<h1 class="text-xl font-semibold tracking-tight">System</h1>
+		<p class="mt-1 text-sm text-ink-3">
+			Engine inventory, the optional host agent, and durable jobs.
+		</p>
+	</header>
+
+	{#if form?.notice}
+		<div role="status" class="border border-rule bg-sheet px-4 py-3 text-sm text-ink-2">
+			{form.notice}
+		</div>
+	{/if}
+
+	<Module title="Host agent">
+		{#if data.agent}
+			<div class="flex flex-wrap items-center gap-2">
+				<Stamp state="verified" label="Connected" />
+				<span class="font-mono text-xs text-ink-3">
+					v{data.agent.version} · protocol {data.agent.protocol}
+				</span>
+			</div>
+			<div class="mt-3 grid gap-x-8 gap-y-1 text-sm sm:grid-cols-2">
+				<p>
+					<span class="text-ink-3">cscli bridge:</span>
+					{#if data.agent.caps.cscli}
+						<span class="font-mono text-xs">{data.agent.caps.cscliMode}</span>
+						{#if data.agent.caps.cscliMode?.startsWith('docker:')}
+							<span class="text-xs text-ink-3">— the agent holds the Docker socket</span>
+						{/if}
+					{:else}
+						<span class="text-ink-3">not configured</span>
+					{/if}
+				</p>
+				<p>
+					<span class="text-ink-3">Scoped file roots:</span>
+					{#if data.agent.caps.files}
+						<span class="font-mono text-xs">{data.agent.caps.roots.join(', ')}</span>
+					{:else}
+						<span class="text-ink-3">none — file ops denied</span>
+					{/if}
+				</p>
+				<p>
+					<span class="text-ink-3">Reload targets:</span>
+					{#if data.agent.caps.services.length}
+						<span class="font-mono text-xs">{data.agent.caps.services.join(', ')}</span>
+					{:else}
+						<span class="text-ink-3">none — reloads denied</span>
+					{/if}
+				</p>
+			</div>
+		{:else if data.agentConfigured}
+			<div class="flex flex-wrap items-center gap-2">
+				<Stamp state="failed" label="Unreachable" />
+				<span class="text-sm text-ink-3">
+					AGENT_SOCKET is set but the agent did not answer — check the agent process and the token.
+				</span>
+			</div>
+		{:else}
+			<div class="flex flex-wrap items-center gap-2">
+				<Stamp state="not_configured" label="Not configured" />
+				<span class="text-sm text-ink-3">
+					Deploy the agent (server/agent.js) on the CrowdSec host and set AGENT_SOCKET + AGENT_TOKEN
+					to unlock tier D: bouncers, Hub, allowlist writes, and managed applies.
+				</span>
+			</div>
+		{/if}
+	</Module>
+
+	{#if data.agent?.caps.cscli}
+		<div class="grid gap-5 lg:grid-cols-2">
+			<Module title="Machines" bodyClass="py-0">
+				{#if data.tierDError}
+					<p class="py-4 text-sm text-degraded">cscli bridge error: {data.tierDError}</p>
+				{:else}
+					<table class="w-full text-left text-sm">
+						<thead>
+							<tr class="border-b border-rule text-xs text-ink-3">
+								<th class="py-2 pr-3 font-medium">Machine</th>
+								<th class="px-3 py-2 font-medium">Last pull</th>
+								<th class="px-3 py-2 font-medium">Version</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each data.machines as m (kv(m, ['machine_id', 'id', 'name']))}
+								<tr class="border-b border-rule last:border-0">
+									<td class="py-2 pr-3 font-mono text-xs">{kv(m, ['machine_id', 'id', 'name'])}</td>
+									<td class="px-3 py-2 text-xs text-ink-3"
+										>{kv(m, ['last_heartbeat', 'last_pull', 'updated_at'])}</td
+									>
+									<td class="px-3 py-2 font-mono text-xs">{kv(m, ['version'])}</td>
+								</tr>
+							{:else}
+								<tr><td colspan="3" class="py-3 text-sm text-ink-3">No machines reported.</td></tr>
+							{/each}
+						</tbody>
+					</table>
+				{/if}
+			</Module>
+
+			<Module title="Bouncers" bodyClass="py-0">
+				{#if data.tierDError}
+					<p class="py-4 text-sm text-degraded">—</p>
+				{:else}
+					<table class="w-full text-left text-sm">
+						<thead>
+							<tr class="border-b border-rule text-xs text-ink-3">
+								<th class="py-2 pr-3 font-medium">Bouncer</th>
+								<th class="px-3 py-2 font-medium">Type</th>
+								<th class="px-3 py-2 font-medium">Last pull</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each data.bouncers as b (kv(b, ['name']))}
+								<tr class="border-b border-rule last:border-0">
+									<td class="py-2 pr-3 font-mono text-xs">{kv(b, ['name'])}</td>
+									<td class="px-3 py-2 text-xs text-ink-3">{kv(b, ['type'])}</td>
+									<td class="px-3 py-2 text-xs text-ink-3">{kv(b, ['last_pull', 'updated_at'])}</td>
+								</tr>
+							{:else}
+								<tr><td colspan="3" class="py-3 text-sm text-ink-3">No bouncers reported.</td></tr>
+							{/each}
+						</tbody>
+					</table>
+				{/if}
+			</Module>
+		</div>
+
+		<Module title="Hub items">
+			{#if data.tierDError}
+				<p class="text-sm text-degraded">—</p>
+			{:else}
+				<p class="mb-2 text-xs text-ink-3">{data.hubCount} installed items.</p>
+				<div class="flex flex-wrap gap-1.5">
+					{#each data.hubItems as item (kv(item, ['name']))}
+						<span class="bg-paper-2 rounded-sm border border-rule px-2 py-0.5 font-mono text-xs">
+							{kv(item, ['name'])}
+						</span>
+					{:else}
+						<span class="text-sm text-ink-3">No hub items installed.</span>
+					{/each}
+				</div>
+			{/if}
+		</Module>
+	{/if}
+
+	<Module title="Jobs">
+		{#if data.jobs.length === 0}
+			<p class="text-sm text-ink-3">
+				No jobs yet — durable work like hub installs, allowlist writes, and managed applies appears
+				here once the agent is connected.
+			</p>
+		{:else}
+			<div class="overflow-x-auto">
+				<table class="w-full text-left text-sm">
+					<thead>
+						<tr class="border-b border-rule text-xs text-ink-3">
+							<th class="py-2 pr-3 font-medium">Job</th>
+							<th class="px-3 py-2 font-medium">State</th>
+							<th class="px-3 py-2 font-medium">Created</th>
+							<th class="px-3 py-2 font-medium">Result</th>
+							{#if data.canOperate}<th class="py-2 pl-3 font-medium"></th>{/if}
+						</tr>
+					</thead>
+					<tbody>
+						{#each data.jobs as j (j.id)}
+							<tr class="border-b border-rule last:border-0">
+								<td class="py-2 pr-3">
+									<span class="font-mono text-xs">{j.kind}</span>
+									{#if j.attempts > 0}
+										<span class="ml-1 text-xs text-ink-3">×{j.attempts + 1}</span>
+									{/if}
+								</td>
+								<td class="px-3 py-2">
+									<Stamp state={jobStamp[j.state] ?? 'not_configured'} label={j.state} />
+								</td>
+								<td class="px-3 py-2 text-xs text-ink-3">{fmt(j.createdAt)}</td>
+								<td class="px-3 py-2 text-xs text-ink-3">
+									<span class="line-clamp-1">{j.result ?? '—'}</span>
+								</td>
+								{#if data.canOperate}
+									<td class="py-2 pl-3 whitespace-nowrap">
+										{#if j.state === 'queued' || j.state === 'running'}
+											<form method="post" action="?/cancelJob" class="inline">
+												<input type="hidden" name="jobId" value={j.id} />
+												<Button variant="secondary" size="sm" type="submit">Cancel</Button>
+											</form>
+										{:else if j.state === 'failed' || j.state === 'rollback_failed' || j.state === 'cancelled'}
+											<form method="post" action="?/runAgain" class="inline">
+												<input type="hidden" name="jobId" value={j.id} />
+												<Button variant="secondary" size="sm" type="submit">Run again</Button>
+											</form>
+										{/if}
+									</td>
+								{/if}
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</Module>
+
+	<Module title="Recent audit">
+		<table class="w-full text-left text-sm">
+			<thead>
+				<tr class="border-b border-rule text-xs text-ink-3">
+					<th class="py-2 pr-3 font-medium">When</th>
+					<th class="px-3 py-2 font-medium">Action</th>
+					<th class="px-3 py-2 font-medium">IP</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each data.recentAudit as a (a.id)}
+					<tr class="border-b border-rule last:border-0">
+						<td class="py-1.5 pr-3 text-xs whitespace-nowrap text-ink-3">{fmt(a.at)}</td>
+						<td class="px-3 py-1.5 font-mono text-xs">{a.action}</td>
+						<td class="px-3 py-1.5 font-mono text-xs text-ink-3">{a.ip ?? '—'}</td>
+					</tr>
+				{:else}
+					<tr><td colspan="3" class="py-3 text-sm text-ink-3">Nothing recorded yet.</td></tr>
+				{/each}
+			</tbody>
+		</table>
+	</Module>
+</div>

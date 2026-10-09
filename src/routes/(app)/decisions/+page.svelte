@@ -113,6 +113,11 @@
 					<form method="post" action="?/allowlistMe">
 						<Button type="submit" size="sm">Allowlist my current IP</Button>
 					</form>
+					{#if data.agentCscli}
+						<form method="post" action="?/allowlistMeAgent">
+							<Button type="submit" size="sm">Allowlist via agent</Button>
+						</form>
+					{/if}
 				</div>
 			</Module>
 

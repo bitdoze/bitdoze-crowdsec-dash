@@ -110,7 +110,21 @@ Verified: `check` 0/0, lint clean, `npm test` 115 (incl. 13 new protect tests: a
 
 **Bug found by that test:** the mock's `nextDecisionId` restarted at 9100 while `.e2e-data` persists — a pushed decision claimed a stored upstream id, and `replaceDecisions`' `onConflict` only refreshed `until`/`expired`/`alertUpstreamId`, so `reconcile` never matched (request stuck `pushed`). Fixed both sides: mock ids are seeded per-process (`Date.now() % 900000`), and the decision upsert now refreshes `type`/`scope`/`value`/`scenario` too.
 
-**Not yet:** real-proxy end-to-end runs (fixture + reference host), the DOCKER-USER firewall-bouncer check (needs tier D agent).
+**Not yet:** real-proxy end-to-end runs (fixture + reference host), the DOCKER-USER firewall-bouncer check (needs tier D agent on a real host).
+
+## Phase 6 (agent + configuration lifecycle) — done, on `main`
+
+- **Host agent** `server/agent.js` (self-contained Node, also shipped in the Docker image): NDJSON-over-unix-socket, token auth with a 5 s handshake timeout, protocol-1 `hello` (version, capabilities = cscli files services). Write ops are serialized behind a mutex; output is capped (512 KiB) and credential-redacted; execs are argv-only `spawn()` (no shell), 30 s timeout. Scopes: `AGENT_CSCLI` (`local` or `docker:<container>`), `AGENT_FILE_ROOTS` (the only writable paths — resolved+realpath-checked), `AGENT_BACKUP_DIR` (restores confined to it), `AGENT_SERVICES` (only declared `systemd:`/`docker:` reload targets). Ops: `hello`, `machines.list`, `bouncers.list`, `hub.list/install/update`, `allowlists.list`, `allowlist.add/remove`, `simulation.set/status`, `setup.detect`, `explain`, `file.backup/write/restore`, `service.reload`.
+- **Dashboard client** `src/lib/server/agent/client.ts`: never throws (all failures → `{ok:false,error}`), 5 s request timeout, `hello` cached 15 s so one `/system` load doesn't round-trip six times. `AGENT_SOCKET`/`AGENT_TOKEN` in `config.ts` (socket defaults `/run/bitdoze-agent.sock`).
+- **Durable jobs** `jobs/queue.ts` + `job`/`job_step` (migration `0005`): idempotency keys dedupe _active_ jobs; finished jobs resubmit under a derived `key~suffix` (keeps the index, keeps "Run again" working); `lockKey` serializes same-resource jobs (queued behind the active one); 60 s heartbeat lease + reclaim (3 attempts → failed); step rows resume-skipped on retry; cancel sets `cancel_requested` → honoured at the next step boundary (crashed workers in `cancel_requested` finalize `cancelled` on reclaim); failures notify a `job`-class inbox event (`critical` if rollback failed); worker drains the queue every tick.
+- **Runners** `jobs/runners.ts`: `hub.install/update`, `allowlist.add/remove`, `simulation.set`, `config.apply` (backup → write → declared reload → mark artifact `applied` only after success) — runners return rollback step lists (restore backup + reload) and can override job lock/idempotency validation per op.
+- **`/system`** (`read`; actions `operate`+): agent stamp (not-configured/unreachable/connected), protocol/version/cscli-mode/file-roots/services, machines + bouncers + hub items, jobs table with step output, Cancel and Run-again controls, audit tail. Nav link is live; `NavItem` typing keeps the `planned` convention.
+- **One-click actions:** "Install via agent" on the collections artifact card, "Allowlist via agent" on `/decisions` (validates the current client IP with `normalizeTarget` first), "Apply via agent" on complete-file artifacts with declared `# /path` targets (acquisition only — fragments stay guided). Tier-D row added to the capability table on `/settings/crowdsec`.
+- **Tests:** `tests/agent.test.ts` spawns the real agent + stub `cscli`/`docker` on PATH (auth, unknown ops, hub validation, allowlist flows, file scoping incl. traversal + undeclared-service rejection); `tests/jobs.test.ts` (23 cases: queue, leases, reclaim, cancel, rollback, idempotency incl. finished-job resubmit, config.apply happy + denied paths); `e2e/system.spec.ts` (unreachable honesty, live-agent caps/inventory via e2e stub binaries, agent allowlist job lifecycle, managed-apply deny → honest `not_applied`). Mock binaries: `e2e/mock-bin/`.
+
+Verified: `check` 0/0, lint clean, `npm test` 138, `npm run build`, full `npx playwright test` 39 pass (+7 skipped), `/system` + site buttons visually reviewed.
+
+**Not yet (phase 7+):** pre-apply diff preview, `crowdsec -t` native validation step, conflict detection for hand-edited files, `explain`/`setup.detect` UI surfaces, formal agent enrollment (token is shared out-of-band today).
 
 ## Actions only the owner can take
 
@@ -125,11 +139,11 @@ Verified: `check` 0/0, lint clean, `npm test` 115 (incl. 13 new protect tests: a
 
 - All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 
-### 2. Phase 6 (v0.4.0): agent + configuration lifecycle — spec checklist.
+### 2. Phase 7 (v0.5.0): first managed integration — Traefik + Docker — spec checklist.
 
-Agent enrollment, the tier-D `cscli` bridge, durable jobs, managed config apply/diff/rollback. This unlocks the remaining phase-4/5 items that need host access: DOCKER-USER coverage check, real per-entry-point ban verification, CVE detection.
+Discover/adopt a Traefik+Docker topology, run phase-5 artifacts through the job lifecycle, attach protection to routers, detect port bypasses, per-router log/parser/client-IP/bouncer/WAF checks on two sites. Needs the agent deployed on a real Docker host.
 
-Later phases (7–13) are fully described in the spec.
+Later phases (8–13) are fully described in the spec.
 
 ## Gotchas already learned
 

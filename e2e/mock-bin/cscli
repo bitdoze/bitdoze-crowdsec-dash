@@ -1,0 +1,22 @@
+#!/bin/sh
+# Stub cscli for e2e — logs argv to AGENT_CALLS_LOG, answers `-o json` list
+# ops with canned data, exits 0 for everything else.
+echo "cscli $*" >> "${AGENT_CALLS_LOG:-/dev/null}"
+case "$*" in
+	"machines list -o json")
+		echo '[{"machine_id":"e2e-machine","ip_address":"127.0.0.1","version":"v1.6.4","last_heartbeat":"2024-01-01T00:00:00Z","is_validated":true}]'
+		;;
+	"bouncers list -o json")
+		echo '[{"name":"e2e-bouncer","type":"caddy","version":"v0.14.1","last_pull":"2024-01-01T00:00:00Z","revoked":false}]'
+		;;
+	"hub list -o json")
+		echo '{"collections":[{"name":"crowdsecurity/caddy","status":"enabled","local_version":"v0.1"},{"name":"crowdsecurity/nginx","status":"enabled","local_version":"v0.3"}],"parsers":[{"name":"crowdsecurity/nginx-logs","status":"enabled","local_version":"v1.5"}]}'
+		;;
+	"allowlists list -o json")
+		echo '[{"name":"dashboard-admin","members":["203.0.113.7"]}]'
+		;;
+	"simulation status -o json")
+		echo '{"simulation_mode":false}'
+		;;
+esac
+exit 0
