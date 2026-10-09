@@ -39,6 +39,11 @@
 	function checkFor(checkId: string) {
 		return data.checks.find((c) => c.checkId === checkId);
 	}
+	const adopted = $derived(
+		(data.detection?.adopted as { proxy?: string; at?: string } | undefined)?.proxy
+	);
+	// Managed writes into the proxy's own config space need adoption (spec 8).
+	const proxyRoot = (p: string | null) => data.proxyRoots.some((r) => p?.startsWith(r));
 </script>
 
 <svelte:head><title>{data.site.hostname} · Sites · CrowdSec Dash</title></svelte:head>
@@ -110,6 +115,33 @@
 			{:else}
 				<p class="text-sm text-ink-3">Operator permissions needed to change topology.</p>
 			{/if}
+			{#if data.canOperate && ['caddy', 'nginx'].includes(data.site.proxy)}
+				{#if adopted === data.site.proxy}
+					<p class="mt-3 text-xs text-ink-3">
+						Adopted for managed config
+						{#if data.detection?.confDir}— dir <code>{data.detection.confDir as string}</code>{/if}
+						— proxy-config artifacts can be applied through the agent (validate + reload when a service
+						target is declared).
+					</p>
+				{:else}
+					<form method="post" action="?/adoptProxy" class="mt-3 flex flex-wrap items-end gap-3">
+						<Field
+							label="Managed config dir"
+							name="confDir"
+							value={(data.detection?.confDir as string) ??
+								(data.site.proxy === 'caddy' ? '/etc/caddy/crowdsec' : '/etc/nginx/conf.d')}
+							class="w-64"
+						/>
+						<Button variant="secondary" size="sm" type="submit">
+							Adopt {data.site.proxy} for managed config
+						</Button>
+					</form>
+					<p class="mt-1 text-[11px] text-ink-3">
+						Required before the agent writes into the proxy config dir — artifacts only ever add new
+						files; your existing config is never edited.
+					</p>
+				{/if}
+			{/if}
 			{#if data.detection}
 				<p class="mt-3 text-xs text-ink-3">
 					Last probe {(data.detection.at as string) ?? ''} — {data.detection.probedUrl as string}:
@@ -128,6 +160,7 @@
 						dynamicDir?: string;
 						traefik?: { container: string; image: string; bouncerPlugin: boolean } | null;
 						crowdsec?: { container: string } | null;
+						proxies?: Array<{ kind: string; container: string; image: string }>;
 						apps?: Array<{
 							container: string;
 							router: string;
@@ -176,6 +209,15 @@
 								</dd>
 							</div>
 						{/each}
+						<div class="flex justify-between gap-3">
+							<dt class="text-ink-3">Other proxies</dt>
+							<dd class="text-right font-mono text-ink">
+								{(d.proxies ?? []).map((p) => `${p.kind} · ${p.container}`).join(' ') || ''}
+								{#if !(d.proxies ?? []).length}
+									<span class="text-ink-3">no caddy/nginx containers</span>
+								{/if}
+							</dd>
+						</div>
 					</dl>
 					<p class="mt-2 text-[11px] text-ink-3">discovered {fmt(new Date(d.at))}</p>
 				{:else}
@@ -262,8 +304,8 @@
 	<Module title={data.agent ? 'Generated artifacts' : 'Generated artifacts — guided, not applied'}>
 		<p class="mb-3 text-xs text-ink-3">
 			{#if data.agent}
-				Complete-file artifacts can be applied through the host agent (backup + write); fragments
-				stay manual. Otherwise
+				Complete-file artifacts can be applied through the host agent (backup → write → validate →
+				reload); fragments stay manual. Otherwise
 			{:else}
 				No host agent connected —
 			{/if}
@@ -289,10 +331,25 @@
 									</form>
 								{/if}
 								{#if a.managed && a.target}
-									<form method="post" action="?/applyArtifact">
-										<input type="hidden" name="artifactId" value={a.id} />
-										<Button variant="secondary" size="sm" type="submit">Apply via agent</Button>
-									</form>
+									{#if proxyRoot(a.target) && adopted !== data.site.proxy}
+										<span class="text-[11px] text-ink-3">adopt {data.site.proxy} to apply</span>
+									{:else}
+										<form method="post" action="?/applyArtifact" class="flex items-center gap-1.5">
+											<input type="hidden" name="artifactId" value={a.id} />
+											{#if (data.agent?.caps.services ?? []).length}
+												<select
+													name="reloadTarget"
+													class="border border-rule bg-sheet px-1.5 py-1 text-[11px] text-ink"
+												>
+													<option value="">no reload</option>
+													{#each data.agent?.caps.services ?? [] as svc (svc)}
+														<option value={svc}>{svc}</option>
+													{/each}
+												</select>
+											{/if}
+											<Button variant="secondary" size="sm" type="submit">Apply via agent</Button>
+										</form>
+									{/if}
 								{/if}
 								<form method="post" action="?/artifactState">
 									<input type="hidden" name="artifactId" value={a.id} />

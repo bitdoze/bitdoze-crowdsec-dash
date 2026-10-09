@@ -357,6 +357,70 @@ describe('config.apply', () => {
 		expect(write!.params.content).toBe('k: KEY-0002');
 	});
 
+	it('validates with the proxy before reloading (validate → reload order)', async () => {
+		const d = await db();
+		behavior['file.backup'] = () => ({ ok: true, result: { backup: '/b/1.bak' } });
+		const { job: j } = await enqueue(d, {
+			kind: 'config.apply',
+			params: {
+				path: '/etc/nginx/conf.d/crowdsec-bouncer.conf',
+				content: 'lua_package_path …\n',
+				validateProxy: 'nginx',
+				validateTarget: 'docker:nginx',
+				reloadTarget: 'docker:nginx'
+			}
+		});
+		await drainJobs(d, 'w');
+		const got = await detail(d, j.id);
+		expect(got!.job.state).toBe('succeeded');
+		expect(got!.steps.map((s) => s.name)).toEqual([
+			'backup /etc/nginx/conf.d/crowdsec-bouncer.conf',
+			'write /etc/nginx/conf.d/crowdsec-bouncer.conf',
+			'validate nginx on docker:nginx',
+			'reload docker:nginx'
+		]);
+		const ops = seenOps.map((s) => s.op);
+		expect(ops.indexOf('proxy.validate')).toBeLessThan(ops.indexOf('service.reload'));
+		const v = seenOps.find((s) => s.op === 'proxy.validate');
+		expect(v!.params).toEqual({ proxy: 'nginx', target: 'docker:nginx' });
+	});
+
+	it('fails and rolls back when validation fails — never reloads', async () => {
+		const d = await db();
+		behavior['file.backup'] = () => ({ ok: true, result: { backup: '/b/1.bak' } });
+		behavior['proxy.validate'] = () => ({
+			ok: false,
+			error: { code: 'exec', message: 'nginx: [emerg] syntax error' }
+		});
+		const { job: j } = await enqueue(d, {
+			kind: 'config.apply',
+			params: {
+				path: '/etc/nginx/conf.d/x.conf',
+				content: 'broken',
+				validateProxy: 'nginx',
+				validateTarget: 'docker:nginx',
+				reloadTarget: 'docker:nginx'
+			}
+		});
+		await drainJobs(d, 'w');
+		const got = await detail(d, j.id);
+		expect(got!.job.state).toBe('failed');
+		// service.reload ran exactly once — the rollback reload after restore.
+		const reloads = seenOps.filter((s) => s.op === 'service.reload');
+		expect(reloads).toHaveLength(1);
+		expect(seenOps.some((s) => s.op === 'file.restore')).toBe(true);
+	});
+
+	it('requires validateProxy when a validateTarget is given', async () => {
+		const d = await db();
+		const { job: j } = await enqueue(d, {
+			kind: 'config.apply',
+			params: { path: '/etc/x', content: 'x', validateTarget: 'docker:nginx' }
+		});
+		await drainJobs(d, 'w');
+		expect((await detail(d, j.id))!.job.state).toBe('failed');
+	});
+
 	it('resumes a crashed job without re-running succeeded steps', async () => {
 		const d = await db();
 		behavior['file.backup'] = () => ({ ok: true, result: { backup: '/b/1.bak' } });

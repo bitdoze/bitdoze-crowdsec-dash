@@ -31,24 +31,40 @@ export const load: PageServerLoad = async (event) => {
 		agentHello()
 	]);
 	// Managed apply is offered only for complete-file artifacts that declare
-	// a `# /path` target line — fragments (Caddyfile snippets, compose
-	// blocks) stay guided because merging is a per-host decision. The
-	// middleware file additionally needs the cscli bridge to issue a key.
+	// a `# /path` target line — fragments stay guided because merging is a
+	// per-host decision. Artifacts carrying a <bouncer-key> placeholder also
+	// need the cscli bridge so the job can issue the key.
+	const NEED_KEY = (a: { content: string }) => a.content.includes('<bouncer-key>');
 	const MANAGED: Record<string, boolean> = {
 		acquisition: !!hello?.caps.files,
-		middleware: !!hello?.caps.files && !!hello?.caps.cscli
+		access_log: !!hello?.caps.files,
+		appsec: !!hello?.caps.files,
+		middleware: !!hello?.caps.files && !!hello?.caps.cscli,
+		bouncer: !!hello?.caps.files && !!hello?.caps.cscli
 	};
+	const detection = s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : null;
+	// Roots that count as proxy-config space — the fixed defaults plus this
+	// site's stored confDir / Traefik dynamic dir.
+	const proxyRoots = ['/etc/caddy/', '/etc/nginx/', '/etc/traefik/'];
+	for (const d of [
+		detection?.confDir,
+		(detection?.docker as Record<string, unknown> | undefined)?.dynamicDir
+	]) {
+		if (typeof d === 'string' && /^\/\S{1,200}$/.test(d))
+			proxyRoots.push(d.endsWith('/') ? d : `${d}/`);
+	}
 	return {
 		site: s,
-		detection: s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : null,
+		detection,
+		proxyRoots,
 		artifacts: artifacts.map((a) => ({
 			...a,
 			target: a.content.match(/^# (\/\S+)$/m)?.[1] ?? null,
-			managed: !!MANAGED[a.kind]
+			needsKey: NEED_KEY(a),
+			managed: !!MANAGED[a.kind] && !!a.content.match(/^# (\/\S+)$/m)?.[1]
 		})),
 		agent: hello,
-		dockerDiscovery: ((s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : null)
-			?.docker ?? null) as Record<string, unknown> | null,
+		dockerDiscovery: (detection?.docker ?? null) as Record<string, unknown> | null,
 		checkDefs: CHECKS,
 		checks: checks.map((c) => ({ ...c, evidence: c.evidence ? JSON.parse(c.evidence) : null })),
 		testPath: TEST_PATH,
@@ -201,7 +217,12 @@ export const actions: Actions = {
 		};
 	},
 
-	/** Tier D: managed apply of a complete-file artifact (backup → write → reload). */
+	/**
+	 * Tier D: managed apply of a complete-file artifact — backup → write →
+	 * optional proxy validate → optional reload. Proxy-config artifacts
+	 * require an adopted topology (explicit adoption, spec 8); CrowdSec-side
+	 * files (acquisition, appsec, bouncer confs) stay unadopted-OK.
+	 */
 	applyArtifact: async (event) => {
 		const user = requirePermission(event, 'operate');
 		const s = await loadSite(event.params.id);
@@ -209,22 +230,58 @@ export const actions: Actions = {
 		if (!hello?.caps.files) return { notice: 'Agent file access is not configured.' };
 		const formData = await event.request.formData();
 		const artifactId = text(formData, 'artifactId');
+		const reloadTarget = text(formData, 'reloadTarget');
+		if (reloadTarget && !(hello.caps.services ?? []).includes(reloadTarget))
+			return { notice: 'Reload target is not in the agent AGENT_SERVICES allowlist.' };
 		const [a] = (await listArtifacts(db, s.id)).filter((x) => x.id === artifactId);
 		const target = a?.content.match(/^# (\/\S+)$/m)?.[1];
-		if (!a || !['acquisition', 'middleware'].includes(a.kind) || !target)
+		const MANAGED_KINDS = ['acquisition', 'middleware', 'bouncer', 'appsec', 'access_log'];
+		if (!a || !MANAGED_KINDS.includes(a.kind) || !target)
 			return { notice: 'Only complete-file artifacts with a declared target can be applied.' };
-		// The middleware file carries a <bouncer-key> placeholder — the job
-		// issues a real key via cscli and substitutes it at write time.
-		const bouncerName =
-			a.kind === 'middleware'
-				? `dash-${s.hostname.replace(/[^a-z0-9]/g, '-').slice(0, 40)}-traefik`
-				: undefined;
+		// Writes into the proxy's own config space require explicit adoption —
+		// CrowdSec-side files (acquis.d, appsec.yaml, bouncer confs) do not.
+		// The roots are the fixed defaults plus the site's stored confDir and
+		// Traefik dynamic dir (they live wherever the admin mapped them).
+		const det = s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : {};
+		const proxyRoots = ['/etc/caddy/', '/etc/nginx/', '/etc/traefik/'];
+		for (const d of [
+			det.confDir,
+			(det.docker as Record<string, unknown> | undefined)?.dynamicDir
+		]) {
+			if (typeof d === 'string' && /^\/\S{1,200}$/.test(d))
+				proxyRoots.push(d.endsWith('/') ? d : `${d}/`);
+		}
+		const touchesProxy = proxyRoots.some((r) => target.startsWith(r));
+		const adopted = (det.adopted as { proxy?: string } | undefined)?.proxy;
+		if (touchesProxy && adopted !== s.proxy)
+			return {
+				notice: `Adopt the ${s.proxy} topology first — managed writes into proxy config need explicit adoption.`
+			};
+		// Artifacts carrying a <bouncer-key> placeholder get a key issued via
+		// cscli and substituted at write time — never persisted.
+		const bouncerName = a.content.includes('<bouncer-key>')
+			? `dash-${s.hostname.replace(/[^a-z0-9]/g, '-').slice(0, 40)}-${s.proxy}`
+			: undefined;
 		if (bouncerName && !hello.caps.cscli)
-			return { notice: 'The middleware artifact needs the agent cscli bridge to issue a key.' };
+			return { notice: 'This artifact needs the agent cscli bridge to issue a bouncer key.' };
+		// Proxy-config files validate through the proxy's own validator before
+		// reload — same declared service target as the reload.
+		const validateProxy =
+			reloadTarget && touchesProxy && ['caddy', 'nginx'].includes(s.proxy)
+				? (s.proxy as 'caddy' | 'nginx')
+				: undefined;
 		const { created, job: j } = await enqueue(db, {
 			kind: 'config.apply',
 			// artifactId lets the job mark the artifact applied only on success.
-			params: { path: target, content: a.content, artifactId: a.id, bouncerName },
+			params: {
+				path: target,
+				content: a.content,
+				artifactId: a.id,
+				bouncerName,
+				reloadTarget: reloadTarget || undefined,
+				validateTarget: reloadTarget || undefined,
+				validateProxy
+			},
 			idempotencyKey: `apply:${a.id}:${a.contentHash}`,
 			lockKey: `file:${target}`,
 			siteId: s.id,
@@ -306,6 +363,7 @@ export const actions: Actions = {
 		if (!docker?.traefik) return { notice: 'Run Docker discovery first — no Traefik seen.' };
 		const formData = await event.request.formData();
 		const dynamicDir = text(formData, 'dynamicDir');
+		const at = new Date().toISOString();
 		await db
 			.update(site)
 			.set({
@@ -313,12 +371,13 @@ export const actions: Actions = {
 				runtime: 'docker',
 				detection: JSON.stringify({
 					...prior,
+					adopted: { proxy: 'traefik', at },
 					docker: {
 						...docker,
 						dynamicDir: /^\/\S{1,200}$/.test(dynamicDir)
 							? dynamicDir
 							: (docker.dynamicDir ?? '/etc/traefik/dynamic'),
-						adoptedAt: new Date().toISOString()
+						adoptedAt: at
 					}
 				})
 			})
@@ -326,9 +385,51 @@ export const actions: Actions = {
 		await regeneratePlan(db, s.id);
 		await recordAudit({
 			event,
-			action: 'site.configured',
-			detail: { hostname: s.hostname, proxy: 'traefik', runtime: 'docker', via: 'adopt' }
+			action: 'site.adopted',
+			detail: { hostname: s.hostname, proxy: 'traefik', runtime: 'docker', via: 'discover' }
 		});
 		return { notice: 'Adopted Traefik/Docker topology — artifacts regenerated.' };
+	},
+
+	/**
+	 * Explicit adoption gate (spec 8) for Caddy/Nginx: marks the site's
+	 * declared proxy as managed so artifacts writing into its config space
+	 * (/etc/caddy, /etc/nginx) become eligible for managed apply.
+	 */
+	adoptProxy: async (event) => {
+		requirePermission(event, 'operate');
+		const s = await loadSite(event.params.id);
+		if (!['caddy', 'nginx'].includes(s.proxy))
+			return {
+				notice: 'Adoption applies to declared Caddy/Nginx sites (Traefik uses Docker adoption).'
+			};
+		const prior = s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : {};
+		const formData = await event.request.formData();
+		const confDir = text(formData, 'confDir');
+		const at = new Date().toISOString();
+		await db
+			.update(site)
+			.set({
+				detection: JSON.stringify({
+					...prior,
+					adopted: { proxy: s.proxy, at },
+					// Where managed proxy files live — nginx conf.d or the Caddy
+					// snippet dir; only valid absolute-ish paths are stored.
+					confDir: /^\/\S{1,200}$/.test(confDir)
+						? confDir
+						: ((prior.confDir as string | undefined) ??
+							(s.proxy === 'caddy' ? '/etc/caddy/crowdsec' : '/etc/nginx/conf.d'))
+				})
+			})
+			.where(eq(site.id, s.id));
+		await regeneratePlan(db, s.id);
+		await recordAudit({
+			event,
+			action: 'site.adopted',
+			detail: { hostname: s.hostname, proxy: s.proxy, runtime: s.runtime, via: 'manual' }
+		});
+		return {
+			notice: `Adopted ${s.proxy} — proxy-config artifacts can now be applied via the agent.`
+		};
 	}
 };

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Stub caddy for e2e — logs argv; `validate` fails when the flag file exists.
+echo "caddy $*" >> "${AGENT_CALLS_LOG:-/dev/null}"
+if [ "$1" = "validate" ] && [ -f "${E2E_STUB_FLAG_DIR:-.e2e-data}/proxy-validate-fail" ]; then
+	echo "mock: Caddyfile adapt failed" >&2
+	exit 1
+fi
+[ "$1" = "validate" ] && echo '{"valid":true}'
+exit 0

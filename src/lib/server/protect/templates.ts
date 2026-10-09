@@ -23,6 +23,12 @@ export type PlanInput = {
 	 * here are picked up live (watch: true). Defaults to /etc/traefik/dynamic.
 	 */
 	dynamicDir?: string;
+	/**
+	 * Directory holding proxy-side managed files — Caddy snippets import from
+	 * here, nginx conf.d files land here. Defaults: /etc/caddy/crowdsec,
+	 * /etc/nginx/conf.d. Stored per-site after adoption/discovery.
+	 */
+	confDir?: string;
 };
 
 export type Artifact = {
@@ -128,16 +134,22 @@ on_success: break
 
 function caddy(input: PlanInput): Artifact[] {
 	const logPath = `${input.logDir}/${input.hostname}.log`;
+	const slug = input.hostname.replace(/[^a-z0-9]/g, '-');
+	const confDir = input.confDir ?? '/etc/caddy/crowdsec';
+	// Snippets live in /etc/caddy/crowdsec/ — new files only, never edited
+	// into the existing Caddyfile. The admin adds one `import` line inside
+	// the site block; `caddy validate` resolves imports, so a managed apply
+	// can validate before reloading.
 	const accessLog: Artifact = {
 		kind: 'access_log',
-		title: `Caddyfile — JSON access log for ${input.hostname}`,
+		title: `Caddyfile snippet — JSON access log for ${input.hostname}`,
 		format: 'caddyfile',
-		content: `${input.hostname} {
-	log {
-		output file ${logPath}
-		format json
-	}
-	# ... existing site content ...
+		content: `# ${confDir}/${slug}-log.caddy
+# Snippet file — add one line inside the site's Caddyfile block:
+#     import ${confDir}/${slug}-log.caddy
+log {
+	output file ${logPath}
+	format json
 }
 `
 	};
@@ -163,16 +175,16 @@ ${
 	};
 	const bouncer: Artifact = {
 		kind: 'bouncer',
-		title: 'Caddy CrowdSec bouncer (custom build required)',
+		title: `Caddyfile snippet — CrowdSec bouncer for ${input.hostname}`,
 		format: 'caddyfile',
-		content: `# The stock caddy image does NOT ship the bouncer — build or pull the
-# pinned image (see the Compose artifact), then add inside the site block:
-${input.hostname} {
-	crowdsec {
-		api_url ${input.lapiUrl}
-		api_key <bouncer-key>   # cscli bouncers add ${input.hostname}-caddy
-		# appsec_url http://crowdsec:7422   # uncomment for inline WAF
-	}
+		content: `# ${confDir}/${slug}.caddy
+# The stock caddy image does NOT ship the bouncer — use the pinned build in
+# the Compose artifact. Add one line inside the site's Caddyfile block:
+#     import ${confDir}/${slug}.caddy
+crowdsec {
+	api_url ${input.lapiUrl}
+	api_key <bouncer-key>   # issued by the managed apply job
+	# appsec_url http://crowdsec:7422   # uncomment for inline WAF
 }
 `
 	};
@@ -185,7 +197,7 @@ appsec_configs:
   - crowdsecurity/appsec-default
   - crowdsecurity/virtual-patching
 listen_addr: 0.0.0.0:7422
-# Then uncomment appsec_url in the bouncer artifact so Caddy forwards
+# Then uncomment appsec_url in the bouncer snippet so Caddy forwards
 # requests for inspection before serving them.
 `
 	};
@@ -207,6 +219,7 @@ listen_addr: 0.0.0.0:7422
         COPY --from=builder /usr/bin/caddy /usr/bin/caddy
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./crowdsec:/etc/caddy/crowdsec:ro   # managed snippets import from here
       - ${input.logDir}:${input.logDir}   # share access logs with CrowdSec
     networks: [proxy]
 `
@@ -403,20 +416,33 @@ volumes:
 
 function nginx(input: PlanInput): Artifact[] {
 	const logPath = `${input.logDir}/${input.hostname}.log`;
+	const confDir = input.confDir ?? '/etc/nginx/conf.d';
 	const accessLog: Artifact = {
 		kind: 'access_log',
-		title: `nginx — host-prefixed log format for ${input.hostname}`,
+		title: 'nginx conf.d — crowdsec log format + Lua bouncer hook',
 		format: 'nginx',
-		content: `# The default 'combined' format has no $host — attribution needs it.
+		// Complete conf.d file — included inside http{} on Debian/RHEL stock
+		// configs, so every directive here is valid in http context. New file
+		// only; no existing nginx config is edited. `nginx -t` covers it.
+		content: `# ${confDir}/crowdsec-bouncer.conf
+# Shared across sites — these are http-context directives, so applying
+# this artifact from any site writes the same file.
+# Requires the Lua module: apt install libnginx-mod-http-lua, or use
+# OpenResty + cs-openresty-bouncer.
+lua_package_path '/usr/lib/crowdsec/lua/?.lua;;';
+init_by_lua_block { require "crowdsec"; }
+# Enforce on every server on this instance. To scope enforcement to one
+# site instead, remove this line and add it inside that site's server{}
+# block:
+access_by_lua_block { require("crowdsec").allow("bitdoze-dash"); }
+
+# The default 'combined' format has no $host — attribution needs it.
 log_format crowdsec '$host $remote_addr - $remote_user [$time_local] '
                     '"$request" $status $body_bytes_sent '
                     '"$http_referer" "$http_user_agent"';
-
-server {
-	server_name ${input.hostname};
-	access_log ${logPath} crowdsec;
-	# ...
-}
+# Then inside each site's server{} block (guided — do not add a server
+# block here, it would shadow your site's routing):
+#   access_log ${logPath} crowdsec;
 `
 	};
 	const realIp: Artifact = {
@@ -453,21 +479,15 @@ real_ip_recursive on;
 	};
 	const bouncer: Artifact = {
 		kind: 'bouncer',
-		title: 'cs-nginx-bouncer install + config',
+		title: 'cs-nginx-bouncer configuration file',
 		format: 'shell',
-		content: `# Requires the Lua module: apt install libnginx-mod-http-lua (or use
-# OpenResty + cs-openresty-bouncer). Then:
-sudo apt install crowdsec-nginx-bouncer-lua   # package name per distro
-# /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf
+		content: `# /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf
+# Complete file — the Lua bouncer daemon reads its API credentials here.
+# Install first: apt install crowdsec-nginx-bouncer-lua (or the OpenResty
+# recipe), and keep the bouncer conf.d artifact applied.
 API_URL=${input.lapiUrl}
-API_KEY=<bouncer-key>   # cscli bouncers add ${input.hostname}-nginx
+API_KEY=<bouncer-key>   # issued by the managed apply job
 # APPSEC_URL=http://127.0.0.1:7422        # uncomment for inline WAF
-
-# nginx.conf — inside http{}:
-lua_package_path '/usr/lib/crowdsec/lua/?.lua;;';
-init_by_lua_block { require "crowdsec"; }
-# and inside this server{} block:
-access_by_lua_block { require("crowdsec").allow("${input.hostname}"); }
 `
 	};
 	const appsec: Artifact = {
@@ -491,9 +511,10 @@ listen_addr: 127.0.0.1:7422
 					content: `services:
   nginx:
     # Pick an image with the Lua module, or bind-mount config + bouncer lua
-    # paths into the official image. Log dir shared with CrowdSec:
+    # paths into the official image. conf.d and log dir shared:
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./conf.d:/etc/nginx/conf.d:ro
       - ./crowdsec-nginx-bouncer.conf:/etc/crowdsec/bouncer.conf:ro
       - ${input.logDir}:${input.logDir}
 `

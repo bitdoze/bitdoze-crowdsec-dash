@@ -1,0 +1,12 @@
+#!/bin/sh
+# Stub systemctl for e2e — logs argv; reload fails when the flag file exists.
+echo "systemctl $*" >> "${AGENT_CALLS_LOG:-/dev/null}"
+case "$1" in
+	reload-or-restart)
+		if [ -f "${E2E_STUB_FLAG_DIR:-.e2e-data}/proxy-reload-fail" ]; then
+			echo "mock: reload failed" >&2
+			exit 1
+		fi
+		;;
+esac
+exit 0

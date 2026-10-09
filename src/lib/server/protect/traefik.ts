@@ -27,6 +27,8 @@ export type TraefikApp = {
 export type TraefikDiscovery = {
 	traefik: { container: string; image: string; bouncerPlugin: boolean } | null;
 	crowdsec: { container: string; image: string } | null;
+	/** Other known proxies seen in the inventory (caddy/nginx), for adoption hints. */
+	proxies: { kind: 'caddy' | 'nginx'; container: string; image: string }[];
 	apps: TraefikApp[];
 	at: string;
 };
@@ -82,11 +84,19 @@ const ROUTER = /^traefik\.http\.routers\.([^.]+)\.(rule|middlewares)$/;
 export function discoverTraefik(containers: DockerContainer[]): TraefikDiscovery {
 	let traefik: TraefikDiscovery['traefik'] = null;
 	let crowdsec: TraefikDiscovery['crowdsec'] = null;
+	const proxies: TraefikDiscovery['proxies'] = [];
 	const apps = new Map<string, TraefikApp>();
 
 	for (const c of containers) {
 		const hay = `${c.image} ${c.command}`.toLowerCase();
 		const isTraefik = /(^|[/:_-])traefik/.test(hay);
+		// Phase 8: caddy/nginx containers are adoptable proxies too — flag
+		// them by image name (traefik images contain "traefik" so order the
+		// checks to keep them disjoint).
+		if (!isTraefik && /(^|[/:_-])caddy/.test(hay))
+			proxies.push({ kind: 'caddy', container: c.name, image: c.image });
+		if (!isTraefik && /(^|[/:_-])(nginx|openresty)/.test(hay))
+			proxies.push({ kind: 'nginx', container: c.name, image: c.image });
 		if (!traefik && isTraefik) {
 			traefik = {
 				container: c.name,
@@ -125,7 +135,13 @@ export function discoverTraefik(containers: DockerContainer[]): TraefikDiscovery
 		for (const app of routers.values()) apps.set(`${c.name}|${app.router}`, app);
 	}
 
-	return { traefik, crowdsec, apps: [...apps.values()], at: new Date().toISOString() };
+	return {
+		traefik,
+		crowdsec,
+		proxies,
+		apps: [...apps.values()],
+		at: new Date().toISOString()
+	};
 }
 
 /** The app router serving this site's hostname, if discovery saw one. */

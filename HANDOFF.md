@@ -140,6 +140,20 @@ Verified: `check` 0/0, lint clean, `npm test` 154, `npm run build`, full `npx pl
 
 **Not yet:** real-Docker-host validation (container recreation, missing networks, log rotation, router attach on a live stack, reload failure against a real service); `explain`-driven parser checks; the phase-7 acceptance gate (verified detection + shared bans + inline WAF on a real Traefik topology).
 
+## Phase 8 (managed Caddy + Nginx via the same lifecycle) — done, on `main`
+
+- **Agent v0.6.0:** `proxy.validate {proxy: caddy|nginx, target, config?}` — the target must be a declared `AGENT_SERVICES` entry (`systemd:<unit>` runs the binary on the host PATH, `docker:<ctr>` runs `docker exec <ctr> <proxy> -t|validate`). Validators check the _live_ config, which resolves `import`/conf.d includes, so a freshly written managed file is covered. Stub `nginx`/`caddy`/`systemctl` binaries + `docker exec`/`kill` cases live in `e2e/mock-bin/`.
+- **`config.apply` gains `validateProxy`/`validateTarget`:** step order is now [key] → backup → write → **validate** → reload; a validate failure fails the job and rolls back (restore + reload) _before_ the reload — the broken config never goes live.
+- **Templates:** `PlanInput.confDir` — the site's managed proxy-config dir (default `/etc/nginx/conf.d`, `/etc/caddy/crowdsec`; stored in `detection.confDir` at adoption). Caddy `access_log`/`bouncer` artifacts became complete importable snippet files (`<confDir>/<host>-log.caddy`, `<confDir>/<host>.caddy` — admin adds one `import` line in the site block). Nginx `access_log` became a complete conf.d file (`lua_package_path` + `init_by_lua_block` + global `access_by_lua_block` + `log_format crowdsec`, shared `crowdsec-bouncer.conf` — applying from any site writes equivalent content) and `bouncer` became a complete `/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf` with a `<bouncer-key>` placeholder. `appsec` artifacts (`/etc/crowdsec/appsec.yaml`) are managed-eligible too.
+- **Adoption gate (spec: explicit adoption of unmanaged resources):** managed writes into proxy-config space — fixed `/etc/{caddy,nginx,traefik}/` roots plus the site's stored `confDir`/`dynamicDir` — require `detection.adopted.proxy === site.proxy` first (new `adoptProxy` action for caddy/nginx; `adoptTraefik` sets it for traefik). CrowdSec-side files need no adoption.
+- **Managed apply UI:** the artifact card gains a reload-target `<select>` populated from `agent.caps.services`; proxy-space artifacts show an "adopt to apply" hint until adopted. Docker discovery now also lists caddy/nginx containers.
+- **Docs:** `docs/proxies.md` — proxy × capability matrix, version pins, adoption rules, unsupported items (per-site observe mode, captcha flow, Caddy JSON config, native Traefik).
+- **Tests:** agent `proxy.validate` cases (docker exec, systemd, custom Caddyfile path, deny + failure); `config.apply` validate-order and validate-fail→rollback (no pre-reload) unit tests; e2e `nginx: adopt → managed conf.d apply validates + reloads` plus the flagged validation-failure path — job row polled via `job.site_id` join on hostname.
+
+Verified: `check` 0/0, lint clean, `npm test` 162, `npm run build`, `e2e/system.spec.ts` 7/7 incl. adopt + apply + validate + reload ordering.
+
+**Not yet:** the two-sites/real-traffic/IPv6/WAF acceptance gate needs real hosts; distro package installs (`apt install libnginx-mod-http-lua`) stay guided deliberately — the agent never installs packages.
+
 ## Actions only the owner can take
 
 1. GitHub → Settings → Actions → General → enable **"Allow GitHub Actions to create and approve pull requests"**. Release-please fails without it (latest Release run: "GitHub Actions is not permitted to create or approve pull requests").
@@ -153,11 +167,11 @@ Verified: `check` 0/0, lint clean, `npm test` 154, `npm run build`, full `npx pl
 
 - All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 
-### 2. Phase 7 real-host validation + Phase 8 (v0.6.0): managed Caddy and Nginx
+### 2. Real-host validation for phases 7–8, then Phase 9 (v0.7.0): website operations + policy UX
 
-Phase 7 code is on `main` with stub-driven e2e; the remaining items need a real Docker host (deploy the agent with `AGENT_DOCKER=1`, run the demo compose artifact, verify detection/bypass/recreation). Phase 8 reuses the same job lifecycle for Caddy + Nginx: managed bouncer config (complete-file artifacts already exist), `service.reload` targets, acquisition + real-IP chains, and per-site verification checks.
+Phases 7–8 are on `main` with stub-driven e2e; real validation needs a Docker host with the agent (`AGENT_DOCKER=1`, `AGENT_SERVICES` including the proxy targets): deploy the demo compose, run adopt→apply→validate→reload per proxy, exercise bypass/recreation/failure paths. Phase 9 then builds site ops on top: WAF protection levels with per-site exclusions + observe-before-block, remediation profile presets, site dashboards + filters + exports, rule/collection inventory, drift views.
 
-Later phases (8–13) are fully described in the spec.
+Later phases (9–13) are fully described in the spec.
 
 ## Gotchas already learned
 

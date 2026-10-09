@@ -18,6 +18,11 @@
  *   AGENT_SERVICES    comma-separated 'systemd:unit' / 'docker:ctr' reload targets
  *   AGENT_DOCKER      '1' enables read-only docker ps/inspect ops
  *                     (default: on when AGENT_CSCLI is docker:<container>)
+ *
+ * proxy.validate reuses the AGENT_SERVICES allowlist: a systemd:<unit>
+ * target runs the proxy binary on the host, docker:<container> runs
+ * docker exec — both validate the proxy's *live* configuration, which
+ * picks up newly written include/snippet files before the reload.
  */
 import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
@@ -51,7 +56,7 @@ const SERVICES = new Set(
 const MAX_OUT = 512 * 1024;
 const MAX_FRAME = 4 * 1024 * 1024;
 const EXEC_TIMEOUT = 30_000;
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
 const PROTOCOL = 1;
 // Read-only docker discovery is opt-in — implicit only when the cscli
 // bridge already execs into a container (socket is clearly present).
@@ -357,6 +362,40 @@ const OPS = {
 			if (kind === 'docker') return run('docker', ['kill', '-s', 'HUP', name]);
 			return err('invalid', 'service targets look like systemd:<unit> or docker:<container>');
 		});
+	},
+
+	/**
+	 * Native config validation — the proxy's own validator against its live
+	 * configuration. Reuses the AGENT_SERVICES allowlist: systemd:<unit>
+	 * runs the binary on the host PATH, docker:<container> execs into it.
+	 * A newly written conf.d/include file is covered because the validator
+	 * reads the main config which includes it.
+	 */
+	'proxy.validate': (p) => {
+		const target = p?.target;
+		if (typeof target !== 'string' || !SERVICES.has(target))
+			return err('denied', 'target is not in AGENT_SERVICES');
+		const proxy = p?.proxy;
+		if (!['caddy', 'nginx'].includes(proxy)) return err('invalid', 'proxy must be caddy or nginx');
+		// Validators check the live config, which resolves includes —
+		// caddy expands `import` during adapt, nginx -t reads conf.d.
+		let argv;
+		if (proxy === 'caddy') {
+			const cfg =
+				typeof p.config === 'string' && /^\/[a-zA-Z0-9._/~-]{1,255}$/.test(p.config)
+					? p.config
+					: '/etc/caddy/Caddyfile';
+			argv = ['validate', '--config', cfg];
+		} else {
+			argv = ['-t'];
+		}
+		const [kind, name] = target.split(':');
+		if (kind === 'systemd') return run(proxy, argv);
+		if (kind === 'docker') {
+			if (!CONTAINER.test(name)) return err('invalid', 'invalid container name');
+			return run('docker', ['exec', name, proxy, ...argv]);
+		}
+		return err('invalid', 'service targets look like systemd:<unit> or docker:<container>');
 	}
 };
 

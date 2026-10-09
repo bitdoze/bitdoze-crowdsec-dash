@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createClient } from '@libsql/client';
 import { ensureConnected } from './helpers.ts';
 
 /**
@@ -33,7 +34,7 @@ async function startAgent() {
 			AGENT_CSCLI: 'local',
 			AGENT_DOCKER: '1',
 			AGENT_FILE_ROOTS: FILE_ROOT,
-			AGENT_SERVICES: 'docker:crowdsec',
+			AGENT_SERVICES: 'docker:crowdsec,docker:nginx,systemd:caddy',
 			AGENT_CALLS_LOG: CALLS,
 			DOCKER_PS_FIXTURE: PS_FIXTURE,
 			PATH: `${process.cwd()}/e2e/mock-bin:${process.env.PATH}`
@@ -122,8 +123,13 @@ test.describe('with a live agent', () => {
 		// must stay "not applied". This is the honesty property end-to-end.
 		await page.goto(`/sites`);
 		await page.getByRole('link', { name: host }).click();
-		// Only acquisition artifacts are managed — exactly one such button exists.
-		await page.getByRole('button', { name: 'Apply via agent' }).click();
+		// The acquisition artifact is CrowdSec-side (no adoption needed); the
+		// conf.d card stays adoption-gated, so exactly one usable apply button.
+		await page
+			.locator('.border-rule', { hasText: 'CrowdSec acquisition' })
+			.first()
+			.getByRole('button', { name: 'Apply via agent' })
+			.click();
 		await expect(page.getByRole('status').first()).toContainText('Queued managed apply');
 		await expect
 			.poll(async () => {
@@ -224,5 +230,73 @@ test.describe('with a live agent', () => {
 		await page.getByRole('link', { name: host }).click();
 		await page.getByRole('button', { name: 'Run checks' }).click();
 		await expect(page.getByText(/publishes 0\.0\.0\.0:8080/).first()).toBeVisible();
+	});
+
+	test('nginx: adopt → managed conf.d apply validates + reloads', async ({ page }) => {
+		const host = `e2e-nx-${Date.now() % 100000}.example.com`;
+		const confDir = join(process.cwd(), FILE_ROOT, 'confd');
+		const flag = '.e2e-data/proxy-validate-fail';
+		try {
+			unlinkSync(flag);
+		} catch {
+			/* absent */
+		}
+		// Poll the job row for THIS site directly — the jobs table shows only
+		// kind/state, so old rows would confuse a text poll.
+		const db = createClient({ url: 'file:.e2e-data/app.db' });
+		const latestJob = async (hostname: string) =>
+			(
+				await db.execute({
+					sql: "SELECT j.state FROM job j JOIN site s ON s.id = j.site_id WHERE s.hostname = ? AND j.kind = 'config.apply' ORDER BY j.created_at DESC LIMIT 1",
+					args: [hostname]
+				})
+			).rows[0]?.state as string | undefined;
+
+		await page.goto('/sites');
+		await page.getByLabel('Hostname').fill(host);
+		await page.getByRole('button', { name: 'Add site' }).click();
+		await page.getByRole('link', { name: host }).click();
+		await page.getByLabel('Proxy').selectOption('nginx');
+		await page.getByLabel('Runs').selectOption('docker');
+		await page.getByRole('button', { name: 'Save + regenerate' }).click();
+		await expect(page.getByRole('status').first()).toContainText('artifacts regenerated');
+
+		// Explicit adoption gate: the conf.d artifact targets /etc/nginx/conf.d
+		// — proxy config space — so the apply button is replaced by a hint.
+		const confCard = page.locator('.border-rule', { hasText: 'conf.d' }).first();
+		await expect(confCard).toBeVisible();
+		await expect(confCard.getByText('adopt nginx to apply')).toBeVisible();
+
+		// Adopt with a managed dir under the agent's file root.
+		await page.getByLabel('Managed config dir').fill(confDir);
+		await page.getByRole('button', { name: 'Adopt nginx for managed config' }).click();
+		await expect(page.getByRole('status').first()).toContainText('Adopted nginx');
+
+		// The regenerated artifact now targets the adopted dir — apply it with
+		// docker:nginx as the validate+reload service target.
+		const card = page.locator('.border-rule', { hasText: 'conf.d' }).first();
+		await expect(card).toContainText(`${confDir}/crowdsec-bouncer.conf`);
+		await card.locator('select[name="reloadTarget"]').selectOption('docker:nginx');
+		await card.getByRole('button', { name: 'Apply via agent' }).click();
+		await expect(page.getByRole('status').first()).toContainText('Queued managed apply');
+		await expect.poll(() => latestJob(host)).toBe('succeeded');
+		// backup → write → proxy.validate → reload — in that order.
+		expect(readFileSync(join(confDir, 'crowdsec-bouncer.conf'), 'utf8')).toContain('log_format');
+		const log = calls();
+		const vi = log.indexOf('docker exec nginx nginx -t');
+		const ri = log.indexOf('docker kill -s HUP nginx');
+		expect(vi).toBeGreaterThan(-1);
+		expect(ri).toBeGreaterThan(vi);
+
+		// Validation failure path: flag the stub, re-apply → job fails and the
+		// artifact is not promoted to applied.
+		writeFileSync(flag, '');
+		await page.goto('/sites');
+		await page.getByRole('link', { name: host }).click();
+		const card2 = page.locator('.border-rule', { hasText: 'conf.d' }).first();
+		await card2.locator('select[name="reloadTarget"]').selectOption('docker:nginx');
+		await card2.getByRole('button', { name: 'Apply via agent' }).click();
+		await expect.poll(() => latestJob(host)).toBe('failed');
+		unlinkSync(flag);
 	});
 });

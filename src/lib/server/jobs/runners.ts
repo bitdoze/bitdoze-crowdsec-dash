@@ -136,10 +136,13 @@ export const RUNNERS: Record<string, Runner> = {
 
 	/**
 	 * Managed apply of a generated artifact: [issue bouncer key] → backup →
-	 * write → optional reload. On failure after the write, restores the
-	 * recorded backup and reloads again. With `bouncerName`/`keyPlaceholder`,
-	 * the placeholder is substituted into content at write time — the key
-	 * lives only in ctx.secrets, never in stored detail.
+	 * write → optional validate → optional reload. On failure after the
+	 * write, restores the recorded backup and reloads again. With
+	 * `bouncerName`/`keyPlaceholder`, the placeholder is substituted into
+	 * content at write time — the key lives only in ctx.secrets, never in
+	 * stored detail. `validateProxy`/`validateTarget` run the proxy's own
+	 * validator (`caddy validate`/`nginx -t`) after the write so a broken
+	 * include is caught and rolled back before the reload.
 	 */
 	'config.apply': {
 		plan: (params) => {
@@ -152,6 +155,16 @@ export const RUNNERS: Record<string, Runner> = {
 			const artifactId = params.artifactId === undefined ? undefined : String(params.artifactId);
 			const bouncerName = params.bouncerName === undefined ? undefined : String(params.bouncerName);
 			if (bouncerName !== undefined && !NAME.test(bouncerName)) bad('invalid bouncer name');
+			const validateTarget =
+				params.validateTarget === undefined ? undefined : String(params.validateTarget);
+			const validateProxy =
+				params.validateProxy === undefined ? undefined : String(params.validateProxy);
+			if (validateTarget !== undefined && !TARGET.test(validateTarget))
+				bad('invalid validate target');
+			if (validateProxy !== undefined && !['caddy', 'nginx'].includes(validateProxy))
+				bad('validateProxy must be caddy or nginx');
+			if (validateProxy === undefined && validateTarget !== undefined)
+				bad('validateTarget needs validateProxy');
 			const placeholder =
 				params.keyPlaceholder === undefined ? '<bouncer-key>' : String(params.keyPlaceholder);
 			const steps: JobStep[] = [];
@@ -182,6 +195,12 @@ export const RUNNERS: Record<string, Runner> = {
 						})
 				}
 			);
+			if (validateTarget) {
+				steps.push({
+					name: `validate ${validateProxy} on ${validateTarget}`,
+					run: () => call('proxy.validate', { proxy: validateProxy, target: validateTarget })
+				});
+			}
 			if (reload) {
 				steps.push({
 					name: `reload ${reload}`,

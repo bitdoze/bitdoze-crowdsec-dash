@@ -92,12 +92,31 @@ beforeAll(async () => {
 			'case "$1" in',
 			'  "ps") cat "${DOCKER_PS_FIXTURE:-/dev/null}";;',
 			'  "inspect") echo \'[{"Id":"stub"}]\';;',
+			'  "exec") echo "validated in-container";;',
 			'esac',
 			'exit 0'
 		].join('\n')
 	);
-	chmodSync(join(BIN_DIR, 'cscli'), 0o755);
-	chmodSync(join(BIN_DIR, 'docker'), 0o755);
+	// Stub proxies — validate exits nonzero when the flag file exists.
+	writeFileSync(
+		join(BIN_DIR, 'nginx'),
+		[
+			'#!/bin/sh',
+			`echo "nginx $*" >> ${CALLS_LOG}`,
+			`[ -f "${join(AGENT_DIR, 'nginx-fail')}" ] && exit 1`,
+			'exit 0'
+		].join('\n')
+	);
+	writeFileSync(
+		join(BIN_DIR, 'caddy'),
+		[
+			'#!/bin/sh',
+			`echo "caddy $*" >> ${CALLS_LOG}`,
+			`[ -f "${join(AGENT_DIR, 'caddy-fail')}" ] && exit 1`,
+			'exit 0'
+		].join('\n')
+	);
+	for (const b of ['cscli', 'docker', 'nginx', 'caddy']) chmodSync(join(BIN_DIR, b), 0o755);
 
 	writeFileSync(
 		join(AGENT_DIR, 'ps.jsonl'),
@@ -114,7 +133,7 @@ beforeAll(async () => {
 			AGENT_CSCLI: 'local',
 			AGENT_DOCKER: '1',
 			AGENT_FILE_ROOTS: FILE_ROOT,
-			AGENT_SERVICES: 'docker:crowdsec',
+			AGENT_SERVICES: 'docker:crowdsec,docker:nginx,systemd:caddy',
 			DOCKER_PS_FIXTURE: join(AGENT_DIR, 'ps.jsonl'),
 			PATH: `${BIN_DIR}:${process.env.PATH}`
 		},
@@ -139,7 +158,7 @@ describe('protocol + auth', () => {
 		expect(r.result.caps.cscli).toBe(true);
 		expect(r.result.caps.docker).toBe(true);
 		expect(r.result.caps.files).toBe(true);
-		expect(r.result.caps.services).toEqual(['docker:crowdsec']);
+		expect(r.result.caps.services).toEqual(['docker:crowdsec', 'docker:nginx', 'systemd:caddy']);
 	});
 
 	it('rejects a bad token by closing the connection', async () => {
@@ -260,5 +279,46 @@ describe('file + service scoping', () => {
 		const denied = await call('service.reload', { target: 'systemd:sshd' });
 		expect(denied.ok).toBe(false);
 		expect(denied.error.code).toBe('denied');
+	});
+});
+
+describe('proxy.validate', () => {
+	it('runs nginx -t inside a declared docker target', async () => {
+		const r = await call('proxy.validate', { proxy: 'nginx', target: 'docker:nginx' });
+		expect(r.ok).toBe(true);
+		expect(calls()).toContain('docker exec nginx nginx -t');
+	});
+
+	it('runs caddy validate locally for a systemd target', async () => {
+		const r = await call('proxy.validate', { proxy: 'caddy', target: 'systemd:caddy' });
+		expect(r.ok).toBe(true);
+		expect(calls()).toContain('caddy validate --config /etc/caddy/Caddyfile');
+	});
+
+	it('honours a custom Caddyfile path', async () => {
+		const r = await call('proxy.validate', {
+			proxy: 'caddy',
+			target: 'systemd:caddy',
+			config: '/srv/caddy/Caddyfile'
+		});
+		expect(r.ok).toBe(true);
+		expect(calls()).toContain('caddy validate --config /srv/caddy/Caddyfile');
+	});
+
+	it('denies undeclared targets and unknown proxies', async () => {
+		const t = await call('proxy.validate', { proxy: 'nginx', target: 'docker:caddy' });
+		expect(t.ok).toBe(false);
+		expect(t.error.code).toBe('denied');
+		const p = await call('proxy.validate', { proxy: 'haproxy', target: 'docker:nginx' });
+		expect(p.ok).toBe(false);
+		expect(p.error.code).toBe('invalid');
+	});
+
+	it('surfaces validation failure output', async () => {
+		writeFileSync(join(AGENT_DIR, 'caddy-fail'), '');
+		const r = await call('proxy.validate', { proxy: 'caddy', target: 'systemd:caddy' });
+		expect(r.ok).toBe(false);
+		expect(r.error.code).toBe('exec');
+		rmSync(join(AGENT_DIR, 'caddy-fail'));
 	});
 });

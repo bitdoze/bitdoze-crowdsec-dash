@@ -8,5 +8,19 @@ case "$*" in
 	"inspect --type container "*)
 		echo '[{"Id":"stub","State":{"Status":"running"}}]'
 		;;
+	"exec "*)
+		# docker exec <ctr> <proxy> <validate args> — fail when the flag file exists.
+		if [ -f "${E2E_STUB_FLAG_DIR:-.e2e-data}/proxy-validate-fail" ]; then
+			echo "mock: config validation failed" >&2
+			exit 1
+		fi
+		echo "configuration is valid"
+		;;
+	"kill -s HUP "*)
+		if [ -f "${E2E_STUB_FLAG_DIR:-.e2e-data}/proxy-reload-fail" ]; then
+			echo "mock: reload failed" >&2
+			exit 1
+		fi
+		;;
 esac
 exit 0

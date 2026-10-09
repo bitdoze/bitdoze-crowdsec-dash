@@ -12,12 +12,16 @@ import { artifactHash, generatePlan, type PlanInput } from './templates.ts';
 type Database = typeof db;
 
 export function planInputFor(s: typeof site.$inferSelect, lapiUrl: string): PlanInput {
-	// Site extras (docker discovery may store a host-side Traefik dynamic dir).
+	// Site extras: docker discovery stores a host-side Traefik dynamic dir;
+	// adoption stores the proxy's managed config dir (conf.d / snippets).
 	let dynamicDir: string | undefined;
+	let confDir: string | undefined;
 	try {
 		const det = s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : {};
 		const v = (det.docker as Record<string, unknown> | undefined)?.dynamicDir;
 		if (typeof v === 'string' && /^\/\S{1,200}$/.test(v)) dynamicDir = v;
+		const cd = det.confDir;
+		if (typeof cd === 'string' && /^\/\S{1,200}$/.test(cd)) confDir = cd;
 	} catch {
 		/* malformed detection JSON — ignore */
 	}
@@ -28,7 +32,8 @@ export function planInputFor(s: typeof site.$inferSelect, lapiUrl: string): Plan
 		cloudflare: s.cloudflare,
 		lapiUrl,
 		logDir: '/var/log/proxy', // documented default; admins adjust paths
-		dynamicDir
+		dynamicDir,
+		confDir
 	};
 }
 

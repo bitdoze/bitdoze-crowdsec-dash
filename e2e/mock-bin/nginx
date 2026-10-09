@@ -1,0 +1,9 @@
+#!/bin/sh
+# Stub nginx for e2e — logs argv; `-t` fails when the flag file exists.
+echo "nginx $*" >> "${AGENT_CALLS_LOG:-/dev/null}"
+if [ "$1" = "-t" ] && [ -f "${E2E_STUB_FLAG_DIR:-.e2e-data}/proxy-validate-fail" ]; then
+	echo "nginx: [emerg] mock syntax error" >&2
+	exit 1
+fi
+[ "$1" = "-t" ] && echo "nginx: configuration file test is successful"
+exit 0

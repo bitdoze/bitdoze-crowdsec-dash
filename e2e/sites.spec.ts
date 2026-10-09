@@ -37,7 +37,7 @@ test('sites: add, detect topology, generate artifacts, verify checks', async ({ 
 	// Artifacts regenerated for Caddy: access log, real-IP (CF-Connecting-IP),
 	// bouncer with the custom-build note, AppSec, compose.
 	await expect(page.getByText('JSON access log', { exact: false }).first()).toBeVisible();
-	await expect(page.getByText('custom build required', { exact: false })).toBeVisible();
+	await expect(page.getByText('stock caddy image does NOT ship', { exact: false })).toBeVisible();
 	await expect(page.getByText('CF-Connecting-IP').first()).toBeVisible();
 
 	// Mark an artifact applied, then unmark — state round-trips.
@@ -112,7 +112,7 @@ test('sites: two topologies share the decision feed a ban lands on', async ({ pa
 
 	// nginx-specific artifacts generated from the answers alone.
 	await page.getByRole('link', { name: hostA }).click();
-	await expect(page.getByText('host-prefixed log format', { exact: false })).toBeVisible();
+	await expect(page.getByText('crowdsec log format', { exact: false }).first()).toBeVisible();
 	await expect(page.getByText('cs-nginx-bouncer', { exact: false }).first()).toBeVisible();
 
 	// Site B — probe-driven topology (Caddy + Cloudflare via the mock).
@@ -143,8 +143,9 @@ test('sites: two topologies share the decision feed a ban lands on', async ({ pa
 	await expect(page.getByRole('status').filter({ hasText: 'Ban requested' })).toBeVisible();
 	await page.goto('/settings/crowdsec');
 	await page.getByRole('button', { name: 'Sync now' }).click();
-	await page.goto('/decisions');
-	await expect(page.getByRole('link', { name: banIp })).toBeVisible();
+	// Filter so accumulated rerun data can't page the new decision away.
+	await page.goto(`/decisions?q=${banIp}`);
+	await expect(page.getByRole('link', { name: banIp }).first()).toBeVisible();
 
 	// decision_feed verifies on both sites once the worker has synced the ban.
 	for (const host of [hostA, hostB]) {

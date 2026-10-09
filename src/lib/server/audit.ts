@@ -87,6 +87,18 @@ const NOTIFY_ACTIONS: Record<
 		title: 'Site topology changed',
 		href: '/protection',
 		fields: ['hostname', 'proxy', 'runtime']
+	},
+	'site.adopted': {
+		severity: 'info',
+		title: 'Site topology adopted for managed config',
+		href: '/protection',
+		fields: ['hostname', 'proxy', 'runtime', 'via']
+	},
+	'site.discovered': {
+		severity: 'info',
+		title: 'Docker topology discovered',
+		href: '/sites',
+		fields: ['hostname', 'traefik', 'apps']
 	}
 };
 
