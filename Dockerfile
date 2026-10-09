@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Build the SvelteKit app (adapter-node output in /app/build)
-FROM node:24-slim AS build
+FROM node:25-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -14,13 +14,13 @@ RUN npm run build
 # (svelte, vite, vitest, drizzle-kit...): dev installs use package.json
 # `overrides` and plain `npm ci` — the flag exists here only to keep the
 # runtime image minimal (74M vs 190M of node_modules).
-FROM node:24-slim AS prod-deps
+FROM node:25-slim AS prod-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --legacy-peer-deps --ignore-scripts
 
 # Runtime
-FROM node:24-slim AS runtime
+FROM node:25-slim AS runtime
 ENV NODE_ENV=production \
 	DATA_DIR=/data \
 	HOST=0.0.0.0 \
