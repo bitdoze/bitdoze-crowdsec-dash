@@ -19,7 +19,7 @@
 	<Tooltip.Portal>
 		<Tooltip.Content
 			sideOffset={6}
-			class="z-50 max-w-64 rounded-[6px] border border-rule-strong bg-sheet px-2 py-1 text-xs text-ink shadow-overlay"
+			class="z-50 max-w-64 rounded-[6px] border border-line bg-sheet px-2 py-1 text-xs text-ink shadow-overlay"
 		>
 			{content}
 		</Tooltip.Content>

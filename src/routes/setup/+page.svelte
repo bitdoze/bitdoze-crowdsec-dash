@@ -1,64 +1,44 @@
 <script lang="ts">
 	import type { ActionData } from './$types';
+	import AuthShell from '#lib/components/AuthShell.svelte';
+	import Field from '#lib/components/Field.svelte';
+	import Button from '#lib/components/Button.svelte';
 
 	let { form }: { form: ActionData } = $props();
 </script>
 
-<div class="mx-auto mt-16 max-w-sm">
-	<h1 class="mb-2 text-2xl font-bold">First-run setup</h1>
-	<p class="mb-6 text-sm text-gray-600">
-		Create the first administrator account. The setup token is printed once in the server log at
-		startup.
+<AuthShell title="First-run setup" subtitle="Create the administrator account">
+	<p class="mb-4 text-sm text-ink-2">
+		The one-time setup token is printed in the server log at startup. This page disappears once the
+		first account exists.
 	</p>
 
 	{#if form?.message}
-		<p class="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{form.message}</p>
+		<p class="mb-4 border border-failed bg-failed-tint px-3 py-2 text-sm text-failed" role="alert">
+			{form.message}
+		</p>
 	{/if}
 
 	<form method="post" class="flex flex-col gap-4">
-		<label class="flex flex-col gap-1 text-sm font-medium">
-			Setup token
-			<input
-				class="rounded-md border border-gray-300 px-3 py-2"
-				type="password"
-				name="token"
-				required
-				autocomplete="off"
-			/>
-		</label>
-		<label class="flex flex-col gap-1 text-sm font-medium">
-			Name
-			<input
-				class="rounded-md border border-gray-300 px-3 py-2"
-				type="text"
-				name="name"
-				required
-				autocomplete="name"
-			/>
-		</label>
-		<label class="flex flex-col gap-1 text-sm font-medium">
-			Email
-			<input
-				class="rounded-md border border-gray-300 px-3 py-2"
-				type="email"
-				name="email"
-				required
-				autocomplete="email"
-			/>
-		</label>
-		<label class="flex flex-col gap-1 text-sm font-medium">
-			Password (min. 12 characters)
-			<input
-				class="rounded-md border border-gray-300 px-3 py-2"
-				type="password"
-				name="password"
-				required
-				minlength="12"
-				autocomplete="new-password"
-			/>
-		</label>
-		<button class="rounded-md bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700">
-			Create administrator
-		</button>
+		<Field
+			label="Setup token"
+			type="password"
+			name="token"
+			required
+			autocomplete="off"
+			hint="From the server log, or SETUP_TOKEN"
+		/>
+		<Field label="Name" type="text" name="name" required autocomplete="name" />
+		<Field label="Email" type="email" name="email" required autocomplete="email" />
+		<Field
+			label="Password"
+			hint="Minimum 12 characters"
+			type="password"
+			name="password"
+			required
+			minlength={12}
+			autocomplete="new-password"
+		/>
+		<Button variant="primary" type="submit" class="mt-1 w-full">Create administrator</Button>
 	</form>
-</div>
+</AuthShell>

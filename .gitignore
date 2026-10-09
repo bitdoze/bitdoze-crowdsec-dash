@@ -31,3 +31,8 @@ bun.lockb
 
 # App data (local database, generated secrets)
 /data
+/.e2e-data
+/e2e/.auth
+/test-results
+/playwright-report
+/.impeccable/review

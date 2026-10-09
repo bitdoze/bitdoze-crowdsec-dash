@@ -698,6 +698,7 @@ Checked boxes below are complete; partially complete items say what remains.
 - 2026-10-09: Foundation landed: scaffold cleanup, adapter-node with origin-pinning server (`server/`), migrations and SQLite pragmas at startup, secret resolution, health/readiness endpoints, first-admin bootstrap with one-time token, login/logout, unit tests. Visual direction chosen ("Inspection Record", `.impeccable/surfaces/`); product record in `PRODUCT.md`.
 - 2026-10-09: Delivery landed: multi-stage Docker image (428 MB, non-root), `compose.yaml`, CI (lint, check, tests, build, container smoke test, Trivy), release-please and multi-arch GHCR publishing with provenance, SBOM, and cosign; actions pinned to commit SHAs; Dependabot with a 7-day cooldown.
 - 2026-10-09: CI fixes and image hardening (Debian updates, npm removed from runtime). The interrupted design-system work is parked on branch `wip/design-system` (does not type-check yet). `HANDOFF.md` records state, owner actions, and next steps.
+- 2026-10-09: "Inspection Record" design system landed on `wip/design-system`: OKLCH themes (light paper / dark carbon copy), Public Sans, stamp-violet accent, six status stamps, component set (Module, Stamp, Evidence, Menu, Sheet, Palette, Field, FilterSelect, CodeBlock, ActivityChart, ScenarioRamp), app shell (sidebar + header + filters + Ctrl K), overview page with schedule/evidence/observations/measurements, restyled `/login` and `/setup`, overview types and `before`/`mixed` fixtures gated by `DEMO_FIXTURES` + `?fixture=`, Playwright e2e in CI, `scripts/contrast-report.mjs` (all pairs AA), `DESIGN.md`.
 
 ### Phase 0 — Confirm the foundation and compatibility
 
@@ -707,7 +708,7 @@ Checked boxes below are complete; partially complete items say what remains.
 - [x] Create a minimal Kit 3 production build using the current official CLI and Node adapter.
 - [x] Pin supported versions of Node, Kit, Svelte, TypeScript, Vite, Tailwind, Better Auth, Drizzle, and libSQL (`package-lock.json`, `engines`, `.nvmrc`).
 - [ ] Verify `@tailwindcss/vite`, shadcn-svelte/Bits UI, `@lucide/svelte`, LayerChart, the Svelte TanStack Table adapter, and the chosen validation library in one Kit 3 production fixture. _Done in the probe except TanStack Table and Zod._
-- [ ] Test a themed dialog/form, an accessible icon button, a responsive chart, and a server-paginated table; check SSR/hydration and Kit 3 import conventions.
+- [ ] Test a themed dialog/form, an accessible icon button, a responsive chart, and a server-paginated table; check SSR/hydration and Kit 3 import conventions. _Done in the app shell: themed Sheet/Menu/palette dialogs (Bits UI), icon buttons, responsive LayerChart bar chart, SSR/hydration verified by Playwright. Remaining: server-paginated table (phase 3)._
 - [x] Verify Kit 3 login/session/logout and server-action cookies with Better Auth and Drizzle in the production build.
 - [ ] Verify database creation/migration/restart persistence and native dependencies on amd64 and arm64. _Done on amd64; arm64 remains._
 - [ ] Verify trusted-origin/runtime configuration for a reusable Docker image. The probe confirmed that old `ORIGIN` recipes no longer apply to adapter-node 6 (section 3.2); build and test the custom server entry over plain HTTP, behind a TLS proxy, and with spoofed forwarding headers. _Done: custom server, plain HTTP, spoofed headers. Remaining: Docker image and TLS proxy._
@@ -728,11 +729,11 @@ Checked boxes below are complete; partially complete items say what remains.
 - [ ] Establish web, worker, shared contracts, agent, deployment, docs, and fixture directories.
 - [x] Add formatting, linting, type checking, focused test commands, and CI build checks (`.github/workflows/ci.yml`: verify, image smoke test, Trivy).
 - [ ] Add the release pipeline now (release-please, multi-arch GHCR images, signatures, SBOM) and publish `edge` images from `main`, so v0.1.0 is a tag rather than a project. _Workflows written and linted; confirm on the first GitHub run._
-- [ ] Run the design pass from section 5.9 and turn it into theme tokens before building screens. _Direction chosen; tokens remain._
+- [x] Run the design pass from section 5.9 and turn it into theme tokens before building screens. "Inspection Record" direction; OKLCH tokens in `src/routes/layout.css`, recorded in `DESIGN.md`.
 - [ ] Define initial migrations for auth, server/site inventory, jobs, configuration revisions, notifications, and audit records. _Auth migration done; domain tables remain._
 - [ ] Add secret-file support, encryption-key handling, structured logging, and redaction. _Secret resolution (env, `_FILE`, generated 0600 file) done._
-- [ ] Add first administrator bootstrap and protected app shell. _Bootstrap and route guard done; designed shell remains._
-- [ ] Add shared theme tokens, the selected UI components, Lucide icon conventions, and reusable table/chart shells; keep installation versions pinned.
+- [x] Add first administrator bootstrap and protected app shell. One-time-token bootstrap at `/setup`; `(app)` route group guarded by session; sidebar + header shell with filters, command palette, and user menu.
+- [x] Add shared theme tokens, the selected UI components, Lucide icon conventions, and reusable table/chart shells; keep installation versions pinned. Tokens in `layout.css`; components in `src/lib/components/` (Bits UI + Lucide + LayerChart); all versions pinned in `package-lock.json`.
 - [ ] Add initial Dockerfiles/Compose, persistent data volume, private networks, and health endpoints. _Done: image (non-root, healthcheck, graceful stop), `compose.yaml`, named volume, `/healthz` and `/readyz`. Private networks arrive with the CrowdSec connection in phase 3._
 - [ ] Define stable component ownership and versioned contract conventions.
 

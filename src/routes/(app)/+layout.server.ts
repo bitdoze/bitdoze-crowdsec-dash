@@ -4,6 +4,7 @@ import type { LayoutServerLoad } from './$types';
 import { db } from '#lib/server/db/index.ts';
 import { user } from '#lib/server/db/auth.schema.ts';
 import { sanitizeRedirectTo } from '#lib/server/redirects.ts';
+import { resolveOverview } from '#lib/server/overview.ts';
 
 export const load: LayoutServerLoad = async (event) => {
 	const [{ value: users }] = await db.select({ value: count() }).from(user);
@@ -14,5 +15,13 @@ export const load: LayoutServerLoad = async (event) => {
 		redirect(302, `/login?redirectTo=${encodeURIComponent(target)}`);
 	}
 
-	return { user: event.locals.user };
+	const overview = resolveOverview(event.url.searchParams.get('fixture'));
+
+	return {
+		user: event.locals.user,
+		shell: {
+			source: overview.source,
+			sites: overview.sites.map((s) => ({ id: s.id, hostname: s.hostname }))
+		}
+	};
 };

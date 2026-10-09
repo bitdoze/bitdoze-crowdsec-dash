@@ -27,5 +27,10 @@ export const variables = defineEnvVars({
 	MIGRATIONS_DIR: {
 		description: 'Directory with drizzle-kit migrations, applied at startup.',
 		schema: (value) => value ?? './drizzle'
+	},
+	DEMO_FIXTURES: {
+		description:
+			'Set to `true` to serve clearly labeled fixture data on the overview outside development (e2e, reviews). Dev mode always enables fixtures. Never set in real deployments.',
+		schema: (value) => value
 	}
 });

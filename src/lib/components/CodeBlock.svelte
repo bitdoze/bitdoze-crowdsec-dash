@@ -30,7 +30,7 @@
 		type="button"
 		onclick={copy}
 		aria-label={copied ? 'Copied' : 'Copy command'}
-		class="absolute top-1.5 right-1.5 inline-flex items-center gap-1 rounded-[3px] border border-rule-strong bg-sheet px-1.5 py-0.5 text-xs text-ink-2 hover:text-ink"
+		class="absolute top-1.5 right-1.5 inline-flex items-center gap-1 rounded-[3px] border border-line bg-sheet px-1.5 py-0.5 text-xs text-ink-2 hover:text-ink"
 	>
 		{#if copied}
 			<Check size={14} strokeWidth={1.75} aria-hidden="true" />Copied

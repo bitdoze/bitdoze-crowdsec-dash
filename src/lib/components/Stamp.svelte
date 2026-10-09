@@ -19,34 +19,45 @@
 
 	let { state, size = 'sm', class: className }: Props = $props();
 
-	const meta: Record<StampState, { label: string; icon: Component; cls: string; ruled: boolean }> = {
-		verified: {
-			label: 'Verified',
-			icon: Check,
-			cls: 'border-verified bg-verified-tint text-verified',
-			ruled: true
-		},
-		degraded: {
-			label: 'Degraded',
-			icon: TriangleAlert,
-			cls: 'border-degraded bg-degraded-tint text-degraded',
-			ruled: true
-		},
-		failed: { label: 'Failed', icon: X, cls: 'border-failed bg-failed-tint text-failed', ruled: true },
-		stale: { label: 'Stale', icon: ClockAlert, cls: 'border-stale bg-stale-tint text-stale', ruled: true },
-		not_configured: {
-			label: 'N/C',
-			icon: Minus,
-			cls: 'border-rule-strong text-ink-3',
-			ruled: false
-		},
-		checking: {
-			label: 'Checking',
-			icon: LoaderCircle,
-			cls: 'border-dotted border-ink-3 text-ink-2',
-			ruled: false
-		}
-	};
+	const meta: Record<StampState, { label: string; icon: Component; cls: string; ruled: boolean }> =
+		{
+			verified: {
+				label: 'Verified',
+				icon: Check,
+				cls: 'border-verified bg-verified-tint text-verified',
+				ruled: true
+			},
+			degraded: {
+				label: 'Degraded',
+				icon: TriangleAlert,
+				cls: 'border-degraded bg-degraded-tint text-degraded',
+				ruled: true
+			},
+			failed: {
+				label: 'Failed',
+				icon: X,
+				cls: 'border-failed bg-failed-tint text-failed',
+				ruled: true
+			},
+			stale: {
+				label: 'Stale',
+				icon: ClockAlert,
+				cls: 'border-stale bg-stale-tint text-stale',
+				ruled: true
+			},
+			not_configured: {
+				label: 'N/C',
+				icon: Minus,
+				cls: 'border-line text-ink-3',
+				ruled: false
+			},
+			checking: {
+				label: 'Checking',
+				icon: LoaderCircle,
+				cls: 'border-dotted border-ink-3 text-ink-2',
+				ruled: false
+			}
+		};
 
 	const m = $derived(meta[state]);
 	const Icon = $derived(m.icon);
@@ -55,7 +66,7 @@
 
 <span
 	class={cn(
-		'inline-flex select-none items-center whitespace-nowrap border font-semibold tracking-[0.06em] uppercase',
+		'inline-flex items-center border font-semibold tracking-[0.06em] whitespace-nowrap uppercase select-none',
 		size === 'sm' ? 'text-xs' : 'text-sm',
 		m.cls,
 		className

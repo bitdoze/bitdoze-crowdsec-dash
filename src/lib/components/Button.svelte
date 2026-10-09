@@ -30,9 +30,10 @@
 		'disabled:cursor-not-allowed disabled:opacity-50',
 		'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-outline',
 		size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm',
-		variant === 'primary' && 'bg-accent text-accent-ink hover:bg-accent-hover active:bg-accent-hover',
+		variant === 'primary' &&
+			'bg-accent text-accent-ink hover:bg-accent-hover active:bg-accent-hover',
 		variant === 'secondary' &&
-			'border border-rule-strong bg-sheet text-ink hover:bg-panel active:bg-panel',
+			'border border-line bg-sheet text-ink hover:bg-panel active:bg-panel',
 		variant === 'ghost' && 'text-ink-2 hover:bg-panel hover:text-ink active:bg-panel',
 		className
 	)}

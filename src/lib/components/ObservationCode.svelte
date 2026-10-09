@@ -16,7 +16,7 @@
 			cls: 'bg-degraded-tint text-degraded border-degraded'
 		},
 		FI: { meaning: 'Further investigation needed', cls: 'text-accent border-accent' },
-		C3: { meaning: 'Improvement recommended', cls: 'text-ink-2 border-rule-strong' }
+		C3: { meaning: 'Improvement recommended', cls: 'text-ink-2 border-line' }
 	};
 
 	const m = $derived(meta[code]);

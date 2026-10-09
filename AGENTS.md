@@ -9,6 +9,9 @@ Start with `HANDOFF.md`: current state, owner decisions, and the next steps in o
 - `npm run check` — `svelte-kit sync` + `svelte-check`
 - `npm run lint` — `prettier --check . && eslint .` (run `npm run format` to fix)
 - `npm test` — `vitest run` (tests in `tests/`, no network)
+- `npm run test:e2e` — Playwright against a built production server (auto-builds; uses `.e2e-data`, resets it per run)
+- `SCREENSHOTS=1 npm run test:e2e` — also captures light/dark × desktop/mobile PNGs to `.impeccable/review/` (gitignored)
+- `node scripts/contrast-report.mjs` — WCAG contrast audit of the `layout.css` tokens (exits 1 on failure)
 - `npm run build` — adapter-node build into `build/`
 - `ORIGIN=http://localhost:3000 npm start` — production server (`server/index.js`)
 - `npm run db:generate` — emit a migration into `drizzle/` from `src/lib/server/db/schema.ts`
@@ -46,7 +49,14 @@ Start with `HANDOFF.md`: current state, owner decisions, and the next steps in o
   `<NAME>_FILE`, or a generated value persisted under `DATA_DIR/secrets/` with
   mode 0600. Never log secret values (the setup token is the single allowed
   exception, logged once at startup).
-- Plain Tailwind markup only for now — no shadcn-svelte/design system yet.
+- UI: "Inspection Record" design system — tokens in `src/routes/layout.css`,
+  components in `src/lib/components/` (Bits UI + Lucide + LayerChart; no shadcn
+  CLI). `DESIGN.md` is the system record; `.impeccable/surfaces/` holds the
+  binding surface briefs. Use `resolve()` from `$app/paths` for navigation —
+  route IDs include the group (`/(app)`). `browser`/`dev` come from `$app/env`.
+- Demo data: overview fixtures live in `src/lib/overview/`; served only in dev
+  or with `DEMO_FIXTURES=true` + `?fixture=before|mixed`. Never fabricate live
+  data elsewhere.
 - Track progress by ticking the phase checklists in section 13 of the spec and
   adding a line to its progress log.
 - Commits follow **Conventional Commits** (`feat:`, `fix:`, `perf:`, `chore:`,

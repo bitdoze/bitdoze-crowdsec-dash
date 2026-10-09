@@ -18,6 +18,7 @@
 	--ink-3: oklch(0.5 0.015 255);
 	--rule: oklch(0.87 0.01 165);
 	--rule-strong: oklch(0.78 0.012 165);
+	--line: oklch(0.6 0.015 255);
 
 	--accent: oklch(0.48 0.2 290);
 	--accent-hover: oklch(0.42 0.2 290);
@@ -46,6 +47,7 @@
 		--ink-3: oklch(0.66 0.01 255);
 		--rule: oklch(0.32 0.01 255);
 		--rule-strong: oklch(0.4 0.01 255);
+		--line: oklch(0.55 0.015 255);
 
 		--accent: oklch(0.72 0.15 290);
 		--accent-hover: oklch(0.77 0.15 290);
@@ -74,6 +76,7 @@ html[data-theme='light'] {
 	--ink-3: oklch(0.5 0.015 255);
 	--rule: oklch(0.87 0.01 165);
 	--rule-strong: oklch(0.78 0.012 165);
+	--line: oklch(0.6 0.015 255);
 
 	--accent: oklch(0.48 0.2 290);
 	--accent-hover: oklch(0.42 0.2 290);
@@ -101,6 +104,7 @@ html[data-theme='dark'] {
 	--ink-3: oklch(0.66 0.01 255);
 	--rule: oklch(0.32 0.01 255);
 	--rule-strong: oklch(0.4 0.01 255);
+	--line: oklch(0.55 0.015 255);
 
 	--accent: oklch(0.72 0.15 290);
 	--accent-hover: oklch(0.77 0.15 290);
@@ -126,6 +130,7 @@ html[data-theme='dark'] {
 	--color-ink-3: var(--ink-3);
 	--color-rule: var(--rule);
 	--color-rule-strong: var(--rule-strong);
+	--color-line: var(--line);
 	--color-accent: var(--accent);
 	--color-accent-hover: var(--accent-hover);
 	--color-accent-ink: var(--accent-ink);
@@ -159,8 +164,7 @@ html[data-theme='dark'] {
 	--radius-control: 3px;
 	--radius-overlay: 6px;
 
-	--shadow-overlay:
-		0 8px 24px -6px rgb(0 0 0 / 0.18), 0 2px 6px -2px rgb(0 0 0 / 0.12);
+	--shadow-overlay: 0 8px 24px -6px rgb(0 0 0 / 0.18), 0 2px 6px -2px rgb(0 0 0 / 0.12);
 }
 
 @layer base {
@@ -199,5 +203,22 @@ html[data-theme='dark'] {
 	h4 {
 		font-weight: 600;
 		letter-spacing: -0.01em;
+	}
+}
+
+@layer components {
+	/* Overlay fade-in, shared by Sheet and Palette (classes reach bits-ui internals). */
+	.overlay-fade {
+		animation: overlay-fade 130ms ease-out;
+	}
+	@keyframes overlay-fade {
+		from {
+			opacity: 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.overlay-fade {
+			animation: none;
+		}
 	}
 }

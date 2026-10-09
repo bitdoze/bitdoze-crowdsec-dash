@@ -17,7 +17,7 @@
 		{align}
 		sideOffset={4}
 		class={cn(
-			'z-50 min-w-44 rounded-[6px] border border-rule-strong bg-sheet p-1 text-sm text-ink shadow-overlay',
+			'z-50 min-w-44 rounded-[6px] border border-line bg-sheet p-1 text-sm text-ink shadow-overlay',
 			className
 		)}
 	>

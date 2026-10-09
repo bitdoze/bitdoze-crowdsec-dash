@@ -38,16 +38,21 @@ Verified locally: `npm ci`, lint, `svelte-check`, 15 unit tests, build, producti
 
 On GitHub: CI is green on `5394842` (verify, image smoke test, Trivy). The `Release` workflow pushed an `edge` image on `ba13498`; on `5394842` it stopped at release-please until owner action 1 below is done.
 
-## Unfinished work
+## Done so far (on `wip/design-system`, not yet merged)
 
-Branch `wip/design-system` (commit `9eca810`) holds the interrupted UI step. It does **not** type-check yet: two errors, because `src/lib/overview/types.ts` was never written. It contains:
+The "Inspection Record" design system and overview are built, verified, and documented:
 
-- tokens in `src/routes/layout.css`;
-- components in `src/lib/components/`: Button, CodeBlock, Kbd, Menu, MenuItem, Module, ObservationCode, Stamp, Tooltip;
-- `src/lib/utils.ts`;
-- new devDependencies: bits-ui, @lucide/svelte, layerchart, clsx, tailwind-merge, @fontsource-variable/public-sans, @internationalized/date, @playwright/test.
+- `DESIGN.md` records the tokens, type, components, layout grammar, and accessibility rules. `scripts/contrast-report.mjs` checks every used token pair against AA (all pass: text ≥4.69:1, control borders ≥3.44:1; decorative hairlines are marked informational).
+- Theme tokens in `src/routes/layout.css` (light "form paper" / dark "carbon copy", `prefers-color-scheme` + `[data-theme]` override). A new `--line` token covers WCAG-1.4.11 component boundaries; `--rule`/`--rule-strong` stay decorative.
+- Components in `src/lib/components/`: Wordmark, Module, Stamp, ObservationCode, Evidence, Button, Field, FilterSelect, Kbd, CodeBlock, Menu/MenuItem, Tooltip, Sheet, Palette, ScenarioRamp, ActivityChart, AuthShell — Bits UI + Lucide, no shadcn CLI.
+- App shell (`src/routes/(app)/+layout.svelte`): 232px sidebar, Sheet below `lg`, header with site/range filters, "Fixture data" chip, Ctrl K palette, user menu.
+- Overview (`src/routes/(app)/+page.svelte`): header band + verdict stamp, server-wide checks, sites × tests schedule with per-cell evidence (Escape + focus restore), ordered observations with "Show fix" code blocks, measurements/activity/scenarios, empty state, fixture-only re-inspect animation (~100ms stagger, `aria-live`, reduced-motion safe).
+- Overview types + `before`/`mixed` fixtures: `src/lib/overview/types.ts`, `fixtures.ts`, `format.ts`; server resolution in `src/lib/server/overview.ts` (dev or `DEMO_FIXTURES=true`, `?fixture=before|mixed`, otherwise `source: 'none'`).
+- `/login` and `/setup` restyled via `AuthShell`.
+- E2E: `npm run test:e2e` (Playwright, 16 tests incl. setup, fixtures, evidence Esc, Show fix, palette, empty state, re-inspect); `SCREENSHOTS=1` captures light/dark × desktop/mobile into `.impeccable/review/`; CI `e2e` job added.
+- Verified on the branch: `npm ci`, lint, `svelte-check` (0/0), 21 unit tests, build, 16 e2e tests, contrast report, `impeccable detect` clean.
 
-Recheck that every package version on the branch is at least 7 days old, then continue from it (or redo it) using the step 1 brief below.
+To finish this step: review the branch, merge `wip/design-system` into `main` (or open a PR), and push. CI will run the new e2e job; Playwright browsers are cached by version.
 
 ## Actions only the owner can take
 
@@ -58,108 +63,9 @@ Recheck that every package version on the branch is at least 7 days old, then co
 
 ## Next steps, in order
 
-### 1. Design system, app shell, and overview (finishes the phase 1 UI items)
+### 1. Merge `wip/design-system` into `main`
 
-The binding direction is in the surface brief above. Requirements:
-
-**World.** Inspection certificates and lab test reports, rendered as crisp UI.
-
-- Never use: paper textures, rotated stamps, gradients, glass, eyebrow labels above headings, big-number KPI cards, colored side borders wider than 1px, hard offset shadows, emoji icons.
-- Only overlays float, with a soft shadow. Everything else is flat, separated by hairline rules.
-- Radii: controls 3px, ruled modules 0, overlays 6px.
-
-**Tokens (OKLCH).** Keep hue and chroma; adjust lightness only, as needed to pass AA.
-
-| Token            | Light ("form")                        | Dark ("carbon copy")              |
-| ---------------- | ------------------------------------- | --------------------------------- |
-| paper            | 0.972 0.006 165                       | 0.20 0.008 255                    |
-| sheet            | 0.995 0.002 165                       | 0.235 0.009 255                   |
-| panel            | 0.945 0.008 165                       | 0.18 0.008 255                    |
-| ink              | 0.235 0.02 255                        | 0.93 0.008 165                    |
-| ink-2            | 0.43 0.018 255                        | 0.75 0.01 255                     |
-| ink-3            | 0.50 0.015 255                        | 0.66 0.01 255                     |
-| rule             | 0.87 0.01 165                         | 0.32 0.01 255                     |
-| rule-strong      | 0.78 0.012 165                        | 0.40 0.01 255                     |
-| accent           | 0.48 0.20 290 (hover 0.42; ink white) | 0.72 0.15 290 (ink 0.20 0.03 290) |
-| verified on tint | 0.50 0.13 155 on 0.95 0.04 155        | 0.78 0.14 155 on 0.30 0.05 155    |
-| degraded on tint | 0.50 0.12 65 on 0.96 0.05 85          | 0.82 0.13 80 on 0.32 0.05 80      |
-| failed on tint   | 0.50 0.19 27 on 0.95 0.035 27         | 0.74 0.16 25 on 0.30 0.06 25      |
-| stale on tint    | 0.50 0.01 255 on 0.94 0.005 255       | 0.72 0.01 255 on 0.28 0.005 255   |
-
-Theme switching: follow `prefers-color-scheme`, with a `[data-theme]` override on `<html>`.
-
-**Type.**
-
-- Public Sans Variable (self-hosted), weights 400–700; system monospace only for IPs, configuration, and commands.
-- Scale: xs 12/16, sm 13/18, base 14/20, md 16/24, lg 19/26, xl 23/30.
-- Tabular numerals everywhere numbers appear.
-- Form labels: xs 600 uppercase, tracking 0.05em.
-- Theme the selection, caret, scrollbar, and focus ring (2px accent with offset).
-- Icons: Lucide only.
-
-**Components** (owned, built on bits-ui; no shadcn CLI):
-
-- **Stamp:** a double-ruled rectangle in six states (VERIFIED, DEGRADED, FAILED, STALE, N/C, CHECKING), always icon plus text.
-- **Module:** a ruled section with its title in a header tab.
-- **ObservationCode:** `<abbr>` for C1, C2, FI, C3.
-- Button, Tooltip, DropdownMenu, a Command palette in a Dialog, Sheet, Kbd, and CodeBlock with Copy.
-
-**App shell** (`src/routes/(app)/+layout.svelte`):
-
-- **Sidebar** (232px, `panel` background): wordmark plus the Lucide Stamp icon.
-  - Overview is the only active link.
-  - Sites, Alerts, Decisions, Protection, Notifications, System, and Settings show as disabled "Planned" items, not dead links.
-- **Header:**
-  - site filter (`?site=`) and time range (`?range=`);
-  - a "Fixture data · not live" chip;
-  - a Ctrl/Cmd+K palette (the IP search entry stays disabled until v0.1);
-  - a user menu with Sign out (POST to `/logout`).
-- **Below 1024px:** the sidebar becomes a Sheet.
-
-**Overview data.**
-
-- Types in `src/lib/overview/types.ts`: CheckState, TestId (logs_read, logs_parsed, client_ip, bouncer, waf, edge), CheckResult, SiteRow, ServerCheck, Observation, Measurement (`value: number | null` plus `unavailableReason`), ActivityPoint, OverviewData (`source: 'fixture' | 'none'`).
-- Fixtures in `src/lib/server/fixtures/overview.ts`, served in dev or when `DEMO_FIXTURES=true`, chosen by `?fixture=before|mixed`. Otherwise show an empty state, "Not connected to CrowdSec yet".
-- Fixture `before` mirrors spec Appendix B, with example.com hostnames only:
-  - Server: "reference-host".
-  - Sites: blog, shop, and status.example.com, all Caddy in Docker.
-  - Server checks: firewall bouncer degraded (no DOCKER-USER chain); community blocklist 21,286.
-  - Site checks: logs, bouncer, WAF, and edge all N/C; client IP stale. Verdict: "Websites not protected".
-  - Observations:
-    - C1 banned IPs still reach the sites;
-    - C1 no detection for the websites;
-    - C2 no inline WAF;
-    - FI LAPI is unreachable from Docker;
-    - C3 the http_extended context is missing.
-  - WAF blocks: "Not measured — AppSec not configured", never 0.
-- Fixture `mixed` shows every state.
-- Add a vitest invariant test for both fixtures.
-
-**Overview layout.**
-
-1. **Header band:** server name, meta line, large verdict stamp, last-inspected time (relative and absolute), primary "Re-inspect" button.
-2. **Inspection schedule** (left, 2fr):
-   - a server-wide strip with the note that bans apply to every site;
-   - a real `<table>`: `#`, Site, T1 Logs read, T2 Parsed, T3 Client IP, T4 Bouncer, T5 WAF, T6 Edge.
-   - Each cell is a button that opens one evidence row under the site: result, measured values, method, time, next step, and "Show fix". Esc closes it and restores focus.
-3. **Observations** (right, 1fr): ordered C1, C2, FI, C3, each with an inline "Show fix" (steps plus CodeBlock).
-4. **Below the fold:**
-   - Measurements as a ruled table;
-   - Activity (24 h): a lazy-loaded LayerChart with a text summary and a hidden data table;
-   - Top scenarios with a fixed five-step magnitude dot ramp.
-5. **Re-inspect (fixture mode only):** cells turn CHECKING row by row, about 90 ms apart, then re-stamp with a short press animation; results are announced through aria-live. With reduced motion: no stagger and no animation.
-
-Also restyle `/login` and `/setup` in the same visual direction.
-
-**Done when:**
-
-- lint, check, unit tests, and build pass;
-- a Playwright e2e suite (`npm run test:e2e`, also added to CI) covers setup, both fixtures, evidence open/close with Esc, Show fix, the palette, and the empty state;
-- `SCREENSHOTS=1` saves light/dark × desktop/mobile captures to `.impeccable/review/` (gitignored);
-- a contrast report shows text ≥4.5:1 and borders/focus ≥3:1;
-- `~/.agents/skills/impeccable/scripts/impeccable detect --json src/routes src/lib/components` is clean or every finding is justified.
-
-Then write `DESIGN.md` from the built result, and tick the phase 1 checklist items.
+All the "Done when" items passed; see "Done so far (on `wip/design-system`)" above and `DESIGN.md`. Review the `.impeccable/review/` screenshots locally (`SCREENSHOTS=1 npm run test:e2e` regenerates them), then merge or open a PR. The binding surface brief remains `.impeccable/surfaces/src-routes-app-page-svelte.md`.
 
 ### 2. Phase 2: authentication and permissions (spec section 9 and phase 2)
 
@@ -188,6 +94,10 @@ Later phases (4–13) are fully described in the spec.
 - **trivy-action:** pinned to v0.36.0, an immutable release after the March 2026 tag-hijack incident. Never pin older trivy-action tags or Trivy 0.69.4–0.69.6.
 - **CI shell:** curl's `%{redirect_url}` is absolute. metadata-action `enable` needs literal true/false. The actionlint image tag has no `v` prefix (`rhysd/actionlint:1.7.12`).
 - **Firewall bouncer:** on the reference host it only covers INPUT, so Docker-published ports are not protected. This is intentional for the "before" fixture.
+- **Kit 3 env module:** `$app/environment` was removed; `browser`/`dev`/`building` live in `$app/env`.
+- **Kit 3 typed routes:** `resolve()` from `$app/paths` takes route IDs — the `(app)` group makes the overview `/(app)`, not `/`. ESLint flags bare `goto('/...')` calls; use `resolve()` and `SvelteURLSearchParams`.
+- **Playwright storage state:** a test that signs out invalidates the shared session file for later tests in the same run. Keep sign-out last, then restore the state file (see `e2e/overview.spec.ts`); shared constants live in `e2e/helpers.ts`, never import one spec from another.
+- **Ctrl+K tests:** press-and-retry until the palette appears — the keydown listener may not be hydrated yet right after `goto`.
 
 ## How to track progress
 
