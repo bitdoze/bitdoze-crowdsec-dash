@@ -17,12 +17,16 @@ import { scrapeMetrics, recordScrapeError } from './scrape.ts';
 import { reconcile } from './decisions.ts';
 import { dispatchOutbox } from '#lib/server/notify/deliver.ts';
 import { recordEvent } from '#lib/server/notify/core.ts';
-import { syncState } from '#lib/server/db/app.schema.ts';
+import { runSiteChecks } from '#lib/server/protect/checks.ts';
+import { site, syncState } from '#lib/server/db/app.schema.ts';
 
 export const SYNC_INTERVAL_MS = 30_000;
+/** Automated protection checks re-run once an hour — cheap projection reads. */
+const CHECKS_EVERY_MS = 3_600_000;
 
 let started = false;
 let running = false;
+let lastChecksAt = 0;
 
 async function previousError(source: 'alerts' | 'metrics'): Promise<string | null> {
 	const row = await db
@@ -113,6 +117,16 @@ async function tick() {
 			} catch (e) {
 				await recordScrapeError(db, e);
 				await reportOutcome('metrics', e, 'scrape threw', !!hadError);
+			}
+		}
+
+		// Hourly re-run of the automated protection checks — spec 5.6 wants
+		// verification re-checked on a schedule, not just on demand.
+		if (Date.now() - lastChecksAt >= CHECKS_EVERY_MS) {
+			lastChecksAt = Date.now();
+			const rows = await db.select({ id: site.id }).from(site);
+			for (const row of rows) {
+				await runSiteChecks(db, row.id).catch(() => undefined);
 			}
 		}
 	} finally {

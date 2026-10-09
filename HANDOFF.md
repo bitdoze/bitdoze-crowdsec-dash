@@ -92,6 +92,20 @@ Verified: `npm run check` 0/0, `npm run lint` clean, `npm test` 102, `npm run bu
 
 **Not yet:** CVE-detect and failed-job notifications (no source yet), the "ban enforced on both fixture sites" check (needs the phase-5 multi-site fixture), release tag v0.2.0 (same release-please gate).
 
+## Phase 5 (guided setup, agent-free core) — done, on `main`
+
+- **Site inventory** (`/sites`): `site` gained `proxy`/`runtime`/`cloudflare`/`detection` columns (migration `0004`). Manual + learned rows; last-alert and check-progress rollups; add/remove/detect actions (`operate`+).
+- **Topology detect** `src/lib/server/protect/detect.ts`: GET probe of the site's public headers (`Server`, `cf-ray`, …) → proxy + Cloudflare guess with the evidence stored on the row. No redirects followed, 8 s timeout, https→http fallback, optional explicit probe URL for intranet front ends. Manual answers always win — detection only fills unknowns.
+- **Artifact generator** `protect/templates.ts`: pure per-proxy (caddy/traefik/nginx) × runtime (native/docker) generation — access-log config, acquis snippet with `target_fqdn`, collection installs, real-IP chains (full Cloudflare ranges + `CF-Connecting-IP`/`forwardedHeaders`/`real_ip_header` per proxy), bouncer config, AppSec config, escalating `duration_expr` remediation preset, Compose snippets (docker only) incl. the pinned `caddy-crowdsec-bouncer@v0.14.1` `dockerfile_inline` build. Unknown proxies get a guidance artifact, not a guess.
+- **Artifact ledger** `config_artifact`: `not_applied → applied (manual) → verified (by a passing check)`. Regeneration preserves state on unchanged content hashes; changed content resets to `not_applied`; removed kinds are dropped.
+- **Verification checks** `protect/checks.ts`: acquisition (attributed alerts = proof), test-alert (marked window → `crowdsecurity/http-generic-test` since-mark lookup; whitelist-aware failure message; unattributed result → `target_fqdn` guidance), decision-feed (sync health + active-decision count), waf (`cs_appsec_*` counters — processed vs blocked), real-ip (private-source heuristic + manual confirm). `markedAt` test windows; worker re-runs the automated set hourly; a verified check promotes its applied artifacts.
+- **UI**: `/sites/[id]` guided plan page (topology form + detect + checks with evidence + artifacts with copy blocks and mark-applied), `/protection` sites×checks stamp matrix. Nav/palette updated; `site.added|removed|configured|detected` fan out to notifications.
+- **E2E** `e2e/sites.spec.ts` + mock `/_site` (header fixture) and `/_inject` (synthetic alert incl. `http-generic-test` w/ `target_fqdn`).
+
+Verified: `check` 0/0, lint clean, `npm test` 115 (incl. 13 new protect tests: artifact sets per proxy/runtime/CF, hash-stable regeneration, check states + promotion), full `npx playwright test` 34 pass (+7 skipped), screens visually reviewed.
+
+**Not yet:** the resumable first-run wizard (inventory + detail exist; the stepper does not), real-proxy end-to-end runs (fixture + reference host), the DOCKER-USER firewall-bouncer check (needs tier D agent).
+
 ## Actions only the owner can take
 
 1. GitHub → Settings → Actions → General → enable **"Allow GitHub Actions to create and approve pull requests"**. Release-please fails without it (latest Release run: "GitHub Actions is not permitted to create or approve pull requests").
@@ -105,11 +119,15 @@ Verified: `npm run check` 0/0, `npm run lint` clean, `npm test` 102, `npm run bu
 
 - All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 
-### 2. Phase 5 (v0.3.0): guided setup + verification for all three proxies — spec checklist.
+### 2. Phase 5 remainder: first-run wizard stepper (5.8) + multi-site fixture validation.
 
-Topology detection, site inventory + first-run wizard, per-proxy generated config (logs, acquisition, real-IP, bouncer, AppSec, remediation presets), Compose snippets, the section-5.6 verification checks, and "not applied" marking until checks pass. The multi-site fixture here also unlocks phase 4's last unchecked item.
+The inventory/detail/matrix screens exist; the wizard itself (stepper connecting connect → detect → plan → verify → notifications) and real-proxy fixture runs remain. This also closes phase 4's "ban enforced on both fixture sites" item.
 
-Later phases (6–13) are fully described in the spec.
+### 3. Phase 6 (v0.4.0): agent + configuration lifecycle — spec checklist.
+
+Agent enrollment, the tier-D `cscli` bridge, durable jobs, managed config apply/diff/rollback.
+
+Later phases (7–13) are fully described in the spec.
 
 ## Gotchas already learned
 

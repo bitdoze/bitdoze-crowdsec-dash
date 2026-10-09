@@ -45,7 +45,13 @@
 			href: resolve('/(app)'),
 			active: page.url.pathname === '/'
 		},
-		{ id: 'sites', label: 'Sites', icon: Globe, planned: true as const },
+		{
+			id: 'sites',
+			label: 'Sites',
+			icon: Globe,
+			href: resolve('/(app)/sites'),
+			active: page.url.pathname.startsWith('/sites')
+		},
 		{
 			id: 'alerts',
 			label: 'Alerts',
@@ -60,7 +66,13 @@
 			href: resolve('/(app)/decisions'),
 			active: page.url.pathname.startsWith('/decisions')
 		},
-		{ id: 'protection', label: 'Protection', icon: ShieldCheck, planned: true as const },
+		{
+			id: 'protection',
+			label: 'Protection',
+			icon: ShieldCheck,
+			href: resolve('/(app)/protection'),
+			active: page.url.pathname.startsWith('/protection')
+		},
 		{
 			id: 'notifications',
 			label: 'Notifications',
@@ -118,6 +130,12 @@
 			id: 'go-notifications',
 			label: 'Go to Notifications',
 			action: () => goto(resolve('/(app)/notifications'))
+		},
+		{ id: 'go-sites', label: 'Go to Sites', action: () => goto(resolve('/(app)/sites')) },
+		{
+			id: 'go-protection',
+			label: 'Go to Protection',
+			action: () => goto(resolve('/(app)/protection'))
 		},
 		{ id: 'search-ip', label: 'Search by IP address', hint: 'v0.1.0', disabled: true },
 		...nav

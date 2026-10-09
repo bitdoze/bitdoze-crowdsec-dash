@@ -134,6 +134,42 @@ const server = createServer((req, res) => {
 		return;
 	}
 
+	// Fake website for the topology probe: serves headers that detect.ts
+	// recognises (Server: Caddy + a Cloudflare ray id).
+	if (url.pathname === '/_site') {
+		res.writeHead(200, {
+			'Content-Type': 'text/html',
+			Server: 'Caddy',
+			'CF-Ray': 'abc123-FRA'
+		});
+		res.end('<html>ok</html>');
+		return;
+	}
+
+	// Alert injector for the verification-check e2e: POST /_inject with
+	// {scenario, fqdn} pushes a synthetic alert into the GET stream.
+	if (url.pathname === '/_inject' && req.method === 'POST') {
+		let body = '';
+		req.on('data', (c) => (body += c));
+		req.on('end', () => {
+			const { scenario, fqdn, ip } = JSON.parse(body || '{}');
+			manualAlerts.push({
+				id: nextAlertId++,
+				scenario: scenario ?? 'crowdsecurity/http-generic-test',
+				message: `injected ${scenario ?? 'test'} alert`,
+				created_at: new Date().toISOString(),
+				started_at: new Date().toISOString(),
+				stopped_at: new Date().toISOString(),
+				source: { scope: 'Ip', value: ip ?? '203.0.113.99', ip: ip ?? '203.0.113.99' },
+				decisions: [],
+				context: fqdn ? [{ key: 'target_fqdn', value: fqdn }] : [],
+				events: [{ meta: [{ key: 'service', value: 'http' }] }]
+			});
+			json(200, { ok: true });
+		});
+		return;
+	}
+
 	// Webhook receiver for notification-delivery e2e: POST /_hook records the
 	// body; GET /_hook/last returns it. The dashboard's SSRF guard allows
 	// RFC1918 destinations, so tests POST to the host's LAN address.

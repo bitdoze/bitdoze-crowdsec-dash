@@ -74,6 +74,19 @@ const NOTIFY_ACTIONS: Record<
 		title: 'Sign-in throttled',
 		href: '/notifications',
 		fields: ['email']
+	},
+	'site.added': {
+		severity: 'info',
+		title: 'Site added',
+		href: '/sites',
+		fields: ['hostname']
+	},
+	'site.removed': { severity: 'info', title: 'Site removed', href: '/sites', fields: ['hostname'] },
+	'site.configured': {
+		severity: 'info',
+		title: 'Site topology changed',
+		href: '/protection',
+		fields: ['hostname', 'proxy', 'runtime']
 	}
 };
 

@@ -49,10 +49,92 @@ export const site = sqliteTable('site', {
 	id: text('id').primaryKey(),
 	hostname: text('hostname').notNull().unique(),
 	source: text('source', { enum: ['manual', 'learned'] }).notNull(),
+	/** Fronting proxy — detected from headers or set by the administrator. */
+	proxy: text('proxy', { enum: ['caddy', 'traefik', 'nginx', 'other', 'unknown'] })
+		.default('unknown')
+		.notNull(),
+	/** Where the proxy runs — the artifact generator keys off this. */
+	runtime: text('runtime', { enum: ['native', 'docker', 'unknown'] })
+		.default('unknown')
+		.notNull(),
+	/** Cloudflare sits in front (detected via cf-ray/cf-cache headers or set). */
+	cloudflare: integer('cloudflare', { mode: 'boolean' }).default(false).notNull(),
+	/** JSON evidence from the last topology probe: {headers, probedUrl, at}. */
+	detection: text('detection'),
 	createdAt: integer('created_at', { mode: 'timestamp_ms' })
 		.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
 		.notNull()
 });
+
+/**
+ * A generated configuration artifact for a site's protection plan. Guided
+ * mode: the dashboard never applies these itself — the administrator copies
+ * them, then marks them applied. `contentHash` lets a later regeneration
+ * show whether the artifact drifted.
+ */
+export const configArtifact = sqliteTable(
+	'config_artifact',
+	{
+		id: text('id').primaryKey(),
+		siteId: text('site_id')
+			.notNull()
+			.references(() => site.id, { onDelete: 'cascade' }),
+		kind: text('kind', {
+			enum: [
+				'access_log',
+				'acquisition',
+				'collections',
+				'real_ip',
+				'bouncer',
+				'appsec',
+				'remediation',
+				'compose'
+			]
+		}).notNull(),
+		title: text('title').notNull(),
+		/** Syntax hint for the code block: yaml | caddyfile | nginx | toml | shell | compose. */
+		format: text('format').notNull(),
+		content: text('content').notNull(),
+		contentHash: text('content_hash').notNull(),
+		/** not_applied until the admin confirms; verified when a check passes. */
+		state: text('state', { enum: ['not_applied', 'applied', 'verified'] })
+			.default('not_applied')
+			.notNull(),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' })
+			.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+			.notNull(),
+		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull()
+	},
+	(table) => [index('configArtifact_site_idx').on(table.siteId)]
+);
+
+/**
+ * Latest result of a per-site protection verification check (spec 5.6).
+ * `markedAt` starts a test window: the admin triggers CrowdSec's own
+ * harmless test path and the check looks for the resulting alert.
+ */
+export const protectionCheck = sqliteTable(
+	'protection_check',
+	{
+		/** Deterministic: `${siteId}|${checkId}`. */
+		id: text('id').primaryKey(),
+		siteId: text('site_id')
+			.notNull()
+			.references(() => site.id, { onDelete: 'cascade' }),
+		checkId: text('check_id').notNull(), // acquisition | test_alert | decision_feed | waf | real_ip
+		state: text('state', {
+			enum: ['not_run', 'verified', 'failed', 'stale', 'not_applicable']
+		})
+			.default('not_run')
+			.notNull(),
+		/** JSON evidence shown under the check: counters, alert ids, guidance. */
+		evidence: text('evidence'),
+		markedAt: integer('marked_at', { mode: 'timestamp_ms' }),
+		checkedAt: integer('checked_at', { mode: 'timestamp_ms' }),
+		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull()
+	},
+	(table) => [index('protectionCheck_site_idx').on(table.siteId)]
+);
 
 /**
  * Cached copy of a CrowdSec alert — a projection of upstream state. The
