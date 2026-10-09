@@ -11,6 +11,10 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Types track the Node LTS line used by the image (node:24).
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -23,3 +27,7 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # Stay on the Node LTS line; move majors deliberately.
+      - dependency-name: node
+        update-types: ['version-update:semver-major']

@@ -45,7 +45,9 @@ jobs:
             docker logs csdash-smoke
             exit 1
           fi
-          curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' http://localhost:3998/ | grep -q '302 /setup'
+          root=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://localhost:3998/)
+          echo "GET / -> $root"
+          [ "$root" = "302 http://localhost:3998/setup" ]
           docker logs csdash-smoke 2>&1 | grep -q 'Setup required:'
           docker rm -f csdash-smoke
       - name: Trivy scan

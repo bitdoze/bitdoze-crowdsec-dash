@@ -41,9 +41,9 @@ jobs:
           tags: |
             type=raw,value=edge
             type=sha,format=short
-            type=semver,pattern={{version}},value=${{ needs.release-please.outputs.tag_name || 'v0.0.0' }},enable=${{ needs.release-please.outputs.release_created }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release-please.outputs.tag_name || 'v0.0.0' }},enable=${{ needs.release-please.outputs.release_created && !contains(needs.release-please.outputs.tag_name, '-') }}
-            type=raw,value=latest,enable=${{ needs.release-please.outputs.release_created && !contains(needs.release-please.outputs.tag_name, '-') }}
+            type=semver,pattern={{version}},value=${{ needs.release-please.outputs.tag_name || 'v0.0.0' }},enable=${{ needs.release-please.outputs.release_created == 'true' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release-please.outputs.tag_name || 'v0.0.0' }},enable=${{ needs.release-please.outputs.release_created == 'true' && !contains(needs.release-please.outputs.tag_name, '-') }}
+            type=raw,value=latest,enable=${{ needs.release-please.outputs.release_created == 'true' && !contains(needs.release-please.outputs.tag_name, '-') }}
       - name: Build and push
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
