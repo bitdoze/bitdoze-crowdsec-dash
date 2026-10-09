@@ -1,1 +1,203 @@
 @import 'tailwindcss';
+@import '@fontsource-variable/public-sans';
+
+/*
+ * "Inspection Record" tokens.
+ * Light = form paper, dark = carbon copy. Values are OKLCH; the two themes are
+ * selected by prefers-color-scheme and can be forced with [data-theme] on
+ * <html> (a theme toggle lands later).
+ */
+:root {
+	color-scheme: light;
+
+	--paper: oklch(0.972 0.006 165);
+	--sheet: oklch(0.995 0.002 165);
+	--panel: oklch(0.945 0.008 165);
+	--ink: oklch(0.235 0.02 255);
+	--ink-2: oklch(0.43 0.018 255);
+	--ink-3: oklch(0.5 0.015 255);
+	--rule: oklch(0.87 0.01 165);
+	--rule-strong: oklch(0.78 0.012 165);
+
+	--accent: oklch(0.48 0.2 290);
+	--accent-hover: oklch(0.42 0.2 290);
+	--accent-ink: oklch(0.995 0.002 165);
+	--accent-outline: oklch(0.48 0.2 290);
+
+	--verified: oklch(0.5 0.13 155);
+	--verified-tint: oklch(0.95 0.04 155);
+	--degraded: oklch(0.5 0.12 65);
+	--degraded-tint: oklch(0.96 0.05 85);
+	--failed: oklch(0.5 0.19 27);
+	--failed-tint: oklch(0.95 0.035 27);
+	--stale: oklch(0.5 0.01 255);
+	--stale-tint: oklch(0.94 0.005 255);
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		color-scheme: dark;
+
+		--paper: oklch(0.2 0.008 255);
+		--sheet: oklch(0.235 0.009 255);
+		--panel: oklch(0.18 0.008 255);
+		--ink: oklch(0.93 0.008 165);
+		--ink-2: oklch(0.75 0.01 255);
+		--ink-3: oklch(0.66 0.01 255);
+		--rule: oklch(0.32 0.01 255);
+		--rule-strong: oklch(0.4 0.01 255);
+
+		--accent: oklch(0.72 0.15 290);
+		--accent-hover: oklch(0.77 0.15 290);
+		--accent-ink: oklch(0.2 0.03 290);
+		--accent-outline: oklch(0.72 0.15 290);
+
+		--verified: oklch(0.78 0.14 155);
+		--verified-tint: oklch(0.3 0.05 155);
+		--degraded: oklch(0.82 0.13 80);
+		--degraded-tint: oklch(0.32 0.05 80);
+		--failed: oklch(0.74 0.16 25);
+		--failed-tint: oklch(0.3 0.06 25);
+		--stale: oklch(0.72 0.01 255);
+		--stale-tint: oklch(0.28 0.005 255);
+	}
+}
+
+html[data-theme='light'] {
+	color-scheme: light;
+
+	--paper: oklch(0.972 0.006 165);
+	--sheet: oklch(0.995 0.002 165);
+	--panel: oklch(0.945 0.008 165);
+	--ink: oklch(0.235 0.02 255);
+	--ink-2: oklch(0.43 0.018 255);
+	--ink-3: oklch(0.5 0.015 255);
+	--rule: oklch(0.87 0.01 165);
+	--rule-strong: oklch(0.78 0.012 165);
+
+	--accent: oklch(0.48 0.2 290);
+	--accent-hover: oklch(0.42 0.2 290);
+	--accent-ink: oklch(0.995 0.002 165);
+	--accent-outline: oklch(0.48 0.2 290);
+
+	--verified: oklch(0.5 0.13 155);
+	--verified-tint: oklch(0.95 0.04 155);
+	--degraded: oklch(0.5 0.12 65);
+	--degraded-tint: oklch(0.96 0.05 85);
+	--failed: oklch(0.5 0.19 27);
+	--failed-tint: oklch(0.95 0.035 27);
+	--stale: oklch(0.5 0.01 255);
+	--stale-tint: oklch(0.94 0.005 255);
+}
+
+html[data-theme='dark'] {
+	color-scheme: dark;
+
+	--paper: oklch(0.2 0.008 255);
+	--sheet: oklch(0.235 0.009 255);
+	--panel: oklch(0.18 0.008 255);
+	--ink: oklch(0.93 0.008 165);
+	--ink-2: oklch(0.75 0.01 255);
+	--ink-3: oklch(0.66 0.01 255);
+	--rule: oklch(0.32 0.01 255);
+	--rule-strong: oklch(0.4 0.01 255);
+
+	--accent: oklch(0.72 0.15 290);
+	--accent-hover: oklch(0.77 0.15 290);
+	--accent-ink: oklch(0.2 0.03 290);
+	--accent-outline: oklch(0.72 0.15 290);
+
+	--verified: oklch(0.78 0.14 155);
+	--verified-tint: oklch(0.3 0.05 155);
+	--degraded: oklch(0.82 0.13 80);
+	--degraded-tint: oklch(0.32 0.05 80);
+	--failed: oklch(0.74 0.16 25);
+	--failed-tint: oklch(0.3 0.06 25);
+	--stale: oklch(0.72 0.01 255);
+	--stale-tint: oklch(0.28 0.005 255);
+}
+
+@theme inline {
+	--color-paper: var(--paper);
+	--color-sheet: var(--sheet);
+	--color-panel: var(--panel);
+	--color-ink: var(--ink);
+	--color-ink-2: var(--ink-2);
+	--color-ink-3: var(--ink-3);
+	--color-rule: var(--rule);
+	--color-rule-strong: var(--rule-strong);
+	--color-accent: var(--accent);
+	--color-accent-hover: var(--accent-hover);
+	--color-accent-ink: var(--accent-ink);
+	--color-accent-outline: var(--accent-outline);
+	--color-verified: var(--verified);
+	--color-verified-tint: var(--verified-tint);
+	--color-degraded: var(--degraded);
+	--color-degraded-tint: var(--degraded-tint);
+	--color-failed: var(--failed);
+	--color-failed-tint: var(--failed-tint);
+	--color-stale: var(--stale);
+	--color-stale-tint: var(--stale-tint);
+
+	--font-sans:
+		'Public Sans Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+	--text-xs: 0.75rem;
+	--text-xs--line-height: 1rem;
+	--text-sm: 0.8125rem;
+	--text-sm--line-height: 1.125rem;
+	--text-base: 0.875rem;
+	--text-base--line-height: 1.25rem;
+	--text-md: 1rem;
+	--text-md--line-height: 1.5rem;
+	--text-lg: 1.1875rem;
+	--text-lg--line-height: 1.625rem;
+	--text-xl: 1.4375rem;
+	--text-xl--line-height: 1.875rem;
+
+	--radius-control: 3px;
+	--radius-overlay: 6px;
+
+	--shadow-overlay:
+		0 8px 24px -6px rgb(0 0 0 / 0.18), 0 2px 6px -2px rgb(0 0 0 / 0.12);
+}
+
+@layer base {
+	html {
+		font-family: var(--font-sans);
+	}
+
+	body {
+		background: var(--paper);
+		color: var(--ink);
+		font-size: var(--text-base);
+		line-height: var(--text-base--line-height);
+		caret-color: var(--accent);
+	}
+
+	::selection {
+		background: color-mix(in oklch, var(--accent) 25%, transparent);
+	}
+
+	:focus-visible {
+		outline: 2px solid var(--accent-outline);
+		outline-offset: 2px;
+	}
+
+	a {
+		text-underline-offset: 3px;
+	}
+
+	* {
+		scrollbar-color: var(--rule-strong) transparent;
+	}
+
+	h1,
+	h2,
+	h3,
+	h4 {
+		font-weight: 600;
+		letter-spacing: -0.01em;
+	}
+}
