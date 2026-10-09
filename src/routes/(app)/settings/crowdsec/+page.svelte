@@ -134,6 +134,50 @@
 		{/if}
 	</Module>
 
+	<Module title="Capability tiers">
+		<div class="overflow-x-auto">
+			<table class="w-full text-sm">
+				<thead>
+					<tr class="border-b border-rule-strong text-left">
+						<th
+							class="w-12 py-1.5 pr-3 text-xs font-semibold tracking-[0.05em] text-ink-3 uppercase"
+							>Tier</th
+						>
+						<th class="py-1.5 pr-3 text-xs font-semibold tracking-[0.05em] text-ink-3 uppercase"
+							>Capability</th
+						>
+						<th class="py-1.5 pr-3 text-xs font-semibold tracking-[0.05em] text-ink-3 uppercase"
+							>State</th
+						>
+						<th class="py-1.5 pr-3 text-xs font-semibold tracking-[0.05em] text-ink-3 uppercase"
+							>Unlocks</th
+						>
+						<th class="py-1.5 text-xs font-semibold tracking-[0.05em] text-ink-3 uppercase"
+							>Detail</th
+						>
+					</tr>
+				</thead>
+				<tbody>
+					{#each data.capabilities as cap (cap.tier)}
+						<tr class="border-b border-rule last:border-0">
+							<td class="py-2 pr-3 font-mono text-xs font-semibold text-ink">{cap.tier}</td>
+							<td class="py-2 pr-3 font-medium text-ink">{cap.label}</td>
+							<td class="py-2 pr-3">
+								<Stamp state={cap.state} />
+							</td>
+							<td class="py-2 pr-3 text-xs text-ink-3">{cap.unlocks}</td>
+							<td class="py-2 text-xs text-ink-3">{cap.detail}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+		<p class="mt-3 text-xs text-ink-3">
+			Each tier unlocks more of the dashboard. Unavailable tiers read N/C — never a fabricated
+			state.
+		</p>
+	</Module>
+
 	{#if data.server.connected}
 		<Module title="Sync status">
 			<div class="overflow-x-auto">

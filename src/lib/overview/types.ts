@@ -149,6 +149,13 @@ export interface ScenarioCount {
 	count: number;
 }
 
+/** Aggregated attack-origin point in map coordinates (equirectangular viewBox). */
+export interface OverviewMapPoint {
+	x: number;
+	y: number;
+	count: number;
+}
+
 export interface Verdict {
 	state: CheckState;
 	/** One-line overall finding, e.g. "Websites not protected". */
@@ -172,4 +179,6 @@ export interface OverviewData {
 	measurements: Measurement[];
 	activity: ActivityPoint[];
 	topScenarios: ScenarioCount[];
+	/** Attack origins from stored alert geo fields; empty when none carry lat/lon. */
+	mapPoints: OverviewMapPoint[];
 }

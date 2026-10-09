@@ -10,6 +10,7 @@
 	import ObservationCode from '#lib/components/ObservationCode.svelte';
 	import CodeBlock from '#lib/components/CodeBlock.svelte';
 	import ActivityChart from '#lib/components/ActivityChart.svelte';
+	import AttackMap from '#lib/components/AttackMap.svelte';
 	import ScenarioRamp from '#lib/components/ScenarioRamp.svelte';
 	import { TESTS, type TestId } from '#lib/overview/types.ts';
 	import { formatCount, formatDateTime, hourLabel, relativeTime } from '#lib/overview/format.ts';
@@ -318,6 +319,14 @@
 							</tbody>
 						</table>
 					</details>
+				</Module>
+
+				<Module title="Attack origins" class="min-w-0 md:col-span-2 xl:col-span-3">
+					<AttackMap points={overview.mapPoints} />
+					<p class="mt-2 text-xs text-ink-3">
+						Alert sources in the selected window, from stored GeoIP fields. Dot size follows the
+						magnitude ramp.
+					</p>
 				</Module>
 
 				<Module title="Top scenarios" class="min-w-0">

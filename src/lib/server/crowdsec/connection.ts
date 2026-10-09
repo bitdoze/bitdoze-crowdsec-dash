@@ -97,6 +97,18 @@ export async function disconnect(database: typeof db) {
 		.where(eq(server.id, 'main'));
 }
 
+/** Decrypt the observer bouncer key, or null when none is stored. */
+export async function getBouncerKey(database: typeof db = db): Promise<string | null> {
+	const row = await database
+		.select({ bouncerKeyEnc: server.bouncerKeyEnc })
+		.from(server)
+		.where(eq(server.id, 'main'))
+		.get();
+	return row?.bouncerKeyEnc
+		? await symmetricDecrypt({ key: encKey(), data: row.bouncerKeyEnc })
+		: null;
+}
+
 /** Decrypt and build a ready client, or null when not connected. */
 export async function buildClient(database: typeof db = db): Promise<LapiClient | null> {
 	const row = await database.select().from(server).where(eq(server.id, 'main')).get();

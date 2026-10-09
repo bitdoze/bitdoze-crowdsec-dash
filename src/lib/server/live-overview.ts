@@ -14,6 +14,7 @@ import {
 	site,
 	syncState
 } from '#lib/server/db/app.schema.ts';
+import { project } from '#lib/map-projection.ts';
 import type { ServerRecord } from '#lib/server/crowdsec/connection.ts';
 import type {
 	ActivityPoint,
@@ -180,6 +181,24 @@ export async function liveOverview(
 	// overkill for v0.1 — decisions mirror alert volume, shown separately below.
 	const activity = [...byHour.values()].sort((a, b) => a.at.localeCompare(b.at));
 
+	// Attack origins: aggregate stored alert geo into ~2° cells, projected into
+	// the equirectangular map viewBox. Alerts without lat/lon are ignored.
+	const geoRows = await database
+		.select({
+			lat: sql<number>`round(${alert.sourceLatitude} / 2) * 2`,
+			lon: sql<number>`round(${alert.sourceLongitude} / 2) * 2`,
+			n: sql<number>`count(*)`
+		})
+		.from(alert)
+		.where(
+			sql`${alert.startedAt} >= ${windowStart} AND ${alert.sourceLatitude} IS NOT NULL AND ${alert.sourceLongitude} IS NOT NULL`
+		)
+		.groupBy(sql`1`, sql`2`);
+	const mapPoints = geoRows.map((r) => {
+		const [x, y] = project(r.lat, r.lon);
+		return { x, y, count: r.n };
+	});
+
 	const scenarioRows = await database
 		.select({ scenario: alert.scenario, n: sql<number>`count(*)` })
 		.from(alert)
@@ -276,6 +295,7 @@ export async function liveOverview(
 		observations,
 		measurements,
 		activity,
-		topScenarios
+		topScenarios,
+		mapPoints
 	};
 }

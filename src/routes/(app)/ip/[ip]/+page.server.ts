@@ -1,11 +1,83 @@
-import type { PageServerLoad } from './$types';
+import { fail } from '@sveltejs/kit';
+import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db/index.ts';
 import { ipDetail, projectionFreshness } from '#lib/server/crowdsec/lists.ts';
-import { getServer } from '#lib/server/crowdsec/connection.ts';
+import { buildClient, getBouncerKey, getServer } from '#lib/server/crowdsec/connection.ts';
+import { LapiError } from '#lib/server/crowdsec/client.ts';
+import { requirePermission } from '#lib/server/roles.ts';
+import { hasPermission } from '#lib/roles.ts';
 
-export const load: PageServerLoad = async ({ params }) => {
-	const connected = !!(await getServer(db));
+export const load: PageServerLoad = async (event) => {
+	const srv = await getServer(db);
 	const freshness = await projectionFreshness(db);
-	const detail = await ipDetail(db, params.ip);
-	return { connected, freshness, ip: params.ip, detail };
+	const detail = await ipDetail(db, event.params.ip);
+	const canLookup = !!event.locals.user && hasPermission(event.locals.user.role, 'operate');
+	return {
+		connected: srv.connected,
+		hasBouncerKey: srv.hasBouncerKey,
+		canLookup,
+		freshness,
+		ip: event.params.ip,
+		detail
+	};
+};
+
+interface BouncerDecision {
+	id?: number;
+	origin?: string;
+	type?: string;
+	scope?: string;
+	value?: string;
+	duration?: string;
+	until?: string;
+	scenario?: string;
+	simulated?: boolean;
+}
+
+export const actions: Actions = {
+	/** Live per-IP decision check through the observer bouncer key. */
+	lookup: async (event) => {
+		requirePermission(event, 'operate');
+		const srv = await getServer(db);
+		if (!srv.connected) return fail(400, { lookupError: 'Not connected to a LAPI.' });
+		if (!srv.hasBouncerKey)
+			return fail(400, {
+				lookupError:
+					'No observer bouncer key configured — add one under CrowdSec connection settings.'
+			});
+		const [client, key] = await Promise.all([buildClient(db), getBouncerKey(db)]);
+		if (!client || !key) return fail(400, { lookupError: 'Connection credentials unavailable.' });
+		try {
+			const raw = await client.decisionsByIp(event.params.ip, key);
+			const list = (Array.isArray(raw) ? raw : []).filter(
+				(d): d is BouncerDecision => typeof d === 'object' && d !== null
+			);
+			return {
+				lookup: {
+					ip: event.params.ip,
+					count: list.length,
+					decisions: list.map((d) => ({
+						origin: d.origin ?? null,
+						type: d.type ?? null,
+						scope: d.scope ?? null,
+						duration: d.duration ?? null,
+						scenario: d.scenario ?? null,
+						simulated: Boolean(d.simulated)
+					}))
+				}
+			};
+		} catch (e) {
+			const msg =
+				e instanceof LapiError
+					? e.kind === 'auth'
+						? 'The observer bouncer key was rejected (401). Re-issue it with cscli bouncers add.'
+						: e.kind === 'unreachable'
+							? `Could not reach the LAPI — ${e.message}`
+							: `LAPI answered ${e.status ?? 'unexpectedly'}.`
+					: e instanceof Error
+						? e.message
+						: String(e);
+			return fail(400, { lookupError: msg });
+		}
+	}
 };

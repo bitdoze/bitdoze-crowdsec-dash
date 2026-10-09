@@ -5,20 +5,26 @@
  */
 import { createServer } from 'node:http';
 
+// Dates are relative to now so rollups, the attack map, and the 24h windows
+// always see the fixture alerts regardless of when the suite runs.
+const ago = (h) => new Date(Date.now() - h * 3_600_000).toISOString();
+
 const ALERTS = [
 	{
 		id: 2,
 		scenario: 'crowdsecurity/http-probing',
 		message: 'Ip 203.0.113.7 performed probing',
-		created_at: '2026-10-09T12:00:00Z',
-		started_at: '2026-10-09T11:59:00Z',
-		stopped_at: '2026-10-09T12:00:00Z',
+		created_at: ago(1),
+		started_at: ago(1.05),
+		stopped_at: ago(1),
 		events_count: 42,
 		source: {
 			scope: 'Ip',
 			value: '203.0.113.7',
 			ip: '203.0.113.7',
 			cn: 'US',
+			latitude: 38.9,
+			longitude: -77.0,
 			as_name: 'EXAMPLENET',
 			as_number: '64512'
 		},
@@ -41,11 +47,18 @@ const ALERTS = [
 		id: 3,
 		scenario: 'crowdsecurity/ssh-bf',
 		message: 'Ip 198.51.100.23 performed ssh-bf',
-		created_at: '2026-10-09T13:00:00Z',
-		started_at: '2026-10-09T12:58:00Z',
-		stopped_at: '2026-10-09T13:00:00Z',
+		created_at: ago(2),
+		started_at: ago(2.03),
+		stopped_at: ago(2),
 		events_count: 12,
-		source: { scope: 'Ip', value: '198.51.100.23', ip: '198.51.100.23', cn: 'NL' },
+		source: {
+			scope: 'Ip',
+			value: '198.51.100.23',
+			ip: '198.51.100.23',
+			cn: 'NL',
+			latitude: 52.37,
+			longitude: 4.9
+		},
 		decisions: [
 			{
 				id: 22,
@@ -65,9 +78,9 @@ const ALERTS = [
 		id: 4,
 		scenario: 'crowdsecurity/community-blocklist',
 		message: 'CAPI-sourced alert — must be skipped',
-		created_at: '2026-10-09T14:00:00Z',
-		started_at: '2026-10-09T14:00:00Z',
-		stopped_at: '2026-10-09T14:00:00Z',
+		created_at: ago(3),
+		started_at: ago(3),
+		stopped_at: ago(3),
 		source: { scope: 'Ip', value: '192.0.2.1', ip: '192.0.2.1' },
 		decisions: [{ id: 23, origin: 'CAPI', type: 'ban', scope: 'Ip', value: '192.0.2.1' }],
 		context: [],
@@ -122,6 +135,41 @@ const server = createServer((req, res) => {
 	if (url.pathname === '/metrics' || url.pathname === '/v1/metrics') {
 		res.writeHead(200, { 'Content-Type': 'text/plain' });
 		res.end(METRICS);
+		return;
+	}
+
+	// Observer-bouncer lookup: keyed by the bouncer key, not the watcher JWT.
+	if (url.pathname === '/v1/decisions') {
+		if (req.headers.authorization !== 'Bearer e2e-bouncer-key') {
+			json(401, { message: 'unauthorized' });
+			return;
+		}
+		const ip = url.searchParams.get('ip');
+		json(
+			200,
+			ip === '203.0.113.7'
+				? [
+						{
+							id: 9001,
+							origin: 'CAPI',
+							type: 'ban',
+							scope: 'Ip',
+							value: '203.0.113.7',
+							duration: '72h',
+							scenario: 'crowdsecurity/community-blocklist'
+						},
+						{
+							id: 9002,
+							origin: 'crowdsec',
+							type: 'ban',
+							scope: 'Ip',
+							value: '203.0.113.7',
+							duration: '4h',
+							scenario: 'crowdsecurity/http-probing'
+						}
+					]
+				: []
+		);
 		return;
 	}
 

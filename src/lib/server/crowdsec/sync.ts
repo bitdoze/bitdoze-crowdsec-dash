@@ -36,6 +36,12 @@ export const PAGE_SIZE = 500;
 
 type Db = typeof db;
 
+/** LAPI geo fields arrive as strings ("48.8566") — coerce, null on junk. */
+const num = (v: number | string | undefined | null): number | null => {
+	const n = typeof v === 'string' ? Number(v) : v;
+	return typeof n === 'number' && Number.isFinite(n) ? n : null;
+};
+
 const ts = (iso: string | undefined | null): Date | null => {
 	if (!iso) return null;
 	const d = new Date(iso);
@@ -119,8 +125,8 @@ async function upsertAlert(database: Db, a: LapiAlert): Promise<{ rowId: string;
 		sourceCn: a.source?.cn ?? null,
 		sourceAsName: a.source?.as_name ?? null,
 		sourceAsNumber: a.source?.as_number ?? null,
-		sourceLatitude: a.source?.latitude ?? null,
-		sourceLongitude: a.source?.longitude ?? null,
+		sourceLatitude: num(a.source?.latitude),
+		sourceLongitude: num(a.source?.longitude),
 		context: a.context?.length ? JSON.stringify(a.context) : null,
 		eventsMeta: JSON.stringify(mergedEventMeta(a)),
 		syncedAt: new Date()

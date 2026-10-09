@@ -1,8 +1,8 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { count, eq } from 'drizzle-orm';
+import { count, eq, sql } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.ts';
-import { alert, decision, site, syncState } from '#lib/server/db/app.schema.ts';
+import { alert, decision, metricSample, site, syncState } from '#lib/server/db/app.schema.ts';
 import { requirePermission } from '#lib/server/roles.ts';
 import { recordAudit } from '#lib/server/audit.ts';
 import { LapiClient, LapiError } from '#lib/server/crowdsec/client.ts';
@@ -24,8 +24,73 @@ export const load: PageServerLoad = async (event) => {
 		.from(decision)
 		.where(eq(decision.expired, false));
 	const [sites] = await db.select({ n: count() }).from(site);
+	const [appsec] = await db
+		.select({ n: sql<number>`count(*)` })
+		.from(metricSample)
+		.where(sql`${metricSample.name} LIKE 'cs_appsec_%'`);
+	const alertsRow = sync.find((s) => s.source === 'alerts');
+	const metricsRow = sync.find((s) => s.source === 'metrics');
+
+	// Capability ladder: each tier unlocks more of the dashboard. Every row is
+	// honest about missing inputs — absent endpoints read N/C, never zero.
+	const capabilities = [
+		{
+			tier: 'T1',
+			label: 'Watcher sync',
+			state: !srv.connected
+				? 'not_configured'
+				: alertsRow?.lastError
+					? 'failed'
+					: alertsRow?.partial
+						? 'stale'
+						: alertsRow?.lastSuccessAt
+							? 'verified'
+							: 'not_configured',
+			detail: srv.connected
+				? 'Alerts and decisions are projected locally from the LAPI.'
+				: 'Connect watcher credentials to start.',
+			unlocks: 'Alerts · decisions · IP records · attack map'
+		},
+		{
+			tier: 'T2',
+			label: 'Metrics',
+			state: !srv.metricsUrl
+				? 'not_configured'
+				: metricsRow?.lastError
+					? 'failed'
+					: metricsRow?.lastSuccessAt
+						? 'verified'
+						: 'not_configured',
+			detail: srv.metricsUrl
+				? 'Prometheus counters from the metrics endpoint.'
+				: 'Add a metrics URL — unlocks counters and version.',
+			unlocks: 'Parser health · CAPI volume · CrowdSec version'
+		},
+		{
+			tier: 'T3',
+			label: 'Observer bouncer',
+			state: srv.hasBouncerKey ? 'verified' : 'not_configured',
+			detail: srv.hasBouncerKey
+				? 'Bouncer key stored (encrypted) — live per-IP decision lookups enabled.'
+				: 'Add a bouncer key (cscli bouncers add) for live per-IP lookups.',
+			unlocks: 'Live decision lookup on IP records'
+		},
+		{
+			tier: 'T4',
+			label: 'AppSec visibility',
+			state: !srv.metricsUrl ? 'not_configured' : appsec.n > 0 ? 'verified' : 'stale',
+			detail: !srv.metricsUrl
+				? 'Needs the metrics endpoint (T2).'
+				: appsec.n > 0
+					? 'cs_appsec_* counters are flowing.'
+					: 'No cs_appsec_* counters seen yet — AppSec may not be deployed.',
+			unlocks: 'WAF processed/blocked/rule-hit counters'
+		}
+	] as const;
+
 	return {
 		server: srv,
+		capabilities,
 		sync: Object.fromEntries(
 			sync.map((s) => [
 				s.source,

@@ -18,8 +18,9 @@ export interface LapiSource {
 	as_number?: string;
 	as_name?: string;
 	cn?: string;
-	latitude?: number;
-	longitude?: number;
+	/** LAPI sends geo fields as strings; sync coerces with `num()`. */
+	latitude?: number | string;
+	longitude?: number | string;
 }
 
 export interface LapiDecision {

@@ -51,9 +51,9 @@ On GitHub: CI is green on `5394842` (verify, image smoke test, Trivy). The `Rele
 - **Recovery CLI:** `npm run recover -- <email>` (`scripts/recover.mjs`) — new random password via BA's own `hashPassword`, clears 2FA rows + sessions + ban + throttle keys, writes an audit row.
 - **Tests:** 41 unit (roles matrix, throttle windows/scope/clear, XFF trust) + `e2e/security.spec.ts` (unauthenticated redirect, 403 for viewer on admin UI, full TOTP enable→sign-in→disable, throttle trip + identity scoping, sign-out).
 
-## Phase 3 (read-only monitoring) — done, uncommitted
+## Phase 3 (read-only monitoring) — done, on `main`
 
-Everything below is implemented and verified; see `git status`. Spec phase-3 checklist updated.
+Everything below is implemented and verified; spec phase-3 checklist updated. Core monitoring committed as `88da675`; attack map / capability tiers / observer lookup as the follow-up commit.
 
 - **LAPI client** `src/lib/server/crowdsec/client.ts`: `POST /v1/watchers/login` → JWT cached until expiry, one refresh on 401; typed `/v1/alerts` (since/until/limit/scenario/ip/origin); `LapiError.kind` ∈ `auth|unreachable|http|bad_response` drives the diagnostics on the settings page; `undici` Agent only when `insecureTls` is opted in.
 - **Projection schema** (migration `0002`): `server` (encrypted `lapi_password_enc`/`bouncer_key_enc` via `secrets.ts`), `site`, `alert` (+`context`/`events_meta` JSON), `alert_site` (`signal` ∈ context/event_meta/datasource), `decision` (`expired` reconciled from `until`), `sync_state` (cursor/lastError/partial per source), `metric_sample`, `activity_rollup` (deterministic `hour|site|scenario|cn` pk).
@@ -65,9 +65,14 @@ Everything below is implemented and verified; see `git status`. Spec phase-3 che
 - **Live overview** `live-overview.ts`: replaces fixtures when connected — LAPI/metrics/projection server stamps, per-site N/C cells (phase-5 tests named as next steps), C2 unattributed + FI read-only observations, activity/scenarios from rollups, CAPI volume measurement.
 - **Tests:** 28 unit (`crowdsec-{client,metrics,attribution,sync}`; sync runs real migrations on in-memory libsql) + `e2e/crowdsec.spec.ts` (bad-credentials diagnostic, connect→sync, CAPI exclusion, filters, expired decisions, IP drill-down, live overview, 503 outage → `SyncBanner` + recovery). Mock LAPI: `e2e/mock-lapi.mjs` on :8090 (started by `webServer[]` in playwright.config; `/_down?set=1` toggles the outage).
 
-Verified: `npm run check` 0/0, `npm run lint` clean, `npm test` 69, `npm run build`, full `npx playwright test` 24 pass (+7 skipped screenshots), new pages visually reviewed.
+- **Attack map** `src/lib/components/AttackMap.svelte` + `src/lib/map-projection.ts`/`map-geo.ts`: world-atlas 110m TopoJSON converted once to SVG path data (equirectangular), lazy-loaded after mount so SSR and the main chunk stay light. `live-overview` aggregates stored alert lat/lon into ~2° cells; sync coerces the LAPI's string geo fields with `num()`. Empty state explains GeoIP is required.
+- **Capability tiers** on `/settings/crowdsec`: T1 watcher sync · T2 metrics · T3 observer bouncer · T4 AppSec visibility — each with its own Stamp state (verified/failed/stale/N-C) and "unlocks" line. N/C for absent inputs, never zero.
+- **Observer-bouncer lookup**: `?/lookup` action on `/ip/[ip]` (`operate`+), uses `getBouncerKey` (decrypts `bouncer_key_enc`) + `LapiClient.decisionsByIp`. Results scoped to the current IP (`form.lookup.ip === data.ip` — SvelteKit keeps `form` across param navigation). Missing key → N/C stamp; 401 → re-issue hint; outage → clean error.
+- **Mock LAPI** gained `/v1/decisions` (`Bearer e2e-bouncer-key`) and relative `ago()` timestamps so 24h windows stay live.
 
-**Not yet:** attack map (geo fields are stored), full capability-tier display (version only), observer-bouncer per-IP lookup UI, reference-host connect (owner action 4), v0.1.0 tag (release-please PR after owner action 1).
+Verified: `npm run check` 0/0, `npm run lint` clean, `npm test` 72, `npm run build`, full `npx playwright test` 26 pass (+7 skipped screenshots), all new screens visually reviewed, contrast report all-pass.
+
+**Not yet:** reference-host connect (owner action 4), v0.1.0 tag (release-please PR after owner action 1).
 
 ## Actions only the owner can take
 
@@ -78,10 +83,9 @@ Verified: `npm run check` 0/0, `npm run lint` clean, `npm test` 69, `npm run bui
 
 ## Next steps, in order
 
-### 1. Finish phase 3 → release v0.1.0
+### 1. Release v0.1.0
 
-- Remaining phase-3 items: attack map from stored geo fields, full capability-tier display, observer-bouncer per-IP lookup UI, reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
-- To release, merge the release-please PR (after owner action 1).
+- All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 
 ### 2. Phase 4 (v0.2.0): decisions, allowlists, notifications — spec checklist.
 
@@ -105,6 +109,7 @@ Later phases (4–13) are fully described in the spec.
 - **Playwright `newContext` in the test runner** inherits `use` options, including `storageState` — pass `storageState: { cookies: [], origins: [] }` for a truly signed-out context (`freshContext` in `e2e/security.spec.ts`). `browser.newPage()` inherits too.
 - **Better Auth API calls from tests** need an explicit `Origin` header (`page.request.post` doesn't send one): `MISSING_OR_NULL_ORIGIN` otherwise.
 - **Playwright `reuseExistingServer`:** a killed run can leave its web server alive; the next run then reuses a stale build. Check the port before rerunning.
+- **Vite dynamic-import split:** if a module is imported both statically and lazily, Vite bundles it eagerly and warns `INEFFECTIVE_DYNAMIC_IMPORT`. Split constants/light helpers (`map-projection.ts`) from heavy data (`map-geo.ts` holds the world-atlas TopoJSON) so the lazy chunk actually splits.
 
 ## How to track progress
 

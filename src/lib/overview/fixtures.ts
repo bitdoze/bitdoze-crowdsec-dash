@@ -306,6 +306,10 @@ export function buildBeforeFixture(now: Date = new Date()): OverviewData {
 		topScenarios: [
 			{ name: 'crowdsecurity/ssh-bf', count: 2 },
 			{ name: 'crowdsecurity/ssh-bf_user-enum', count: 1 }
+		],
+		mapPoints: [
+			{ x: 552, y: 122, count: 2 }, // CN, ssh-bf ×2
+			{ x: 295, y: 170, count: 1 } // US, ssh-bf_user-enum
 		]
 	};
 }
@@ -625,6 +629,12 @@ export function buildMixedFixture(now: Date = new Date()): OverviewData {
 			{ name: 'crowdsecurity/http-cve', count: 3 },
 			{ name: 'crowdsecurity/appsec-generic', count: 2 },
 			{ name: 'crowdsecurity/http-sensitive-files', count: 2 }
+		],
+		mapPoints: [
+			{ x: 552, y: 122, count: 7 }, // CN
+			{ x: 295, y: 170, count: 5 }, // US
+			{ x: 424, y: 96, count: 4 }, // RU
+			{ x: 342, y: 224, count: 2 } // BR
 		]
 	};
 }
@@ -641,6 +651,7 @@ export function emptyOverview(): OverviewData {
 		observations: [],
 		measurements: [],
 		activity: [],
-		topScenarios: []
+		topScenarios: [],
+		mapPoints: []
 	};
 }
