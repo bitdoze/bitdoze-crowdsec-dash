@@ -39,9 +39,7 @@ Verified locally: `npm ci`, lint, `svelte-check`, 15 unit tests, build, producti
 
 On GitHub: CI is green on `5394842` (verify, image smoke test, Trivy). The `Release` workflow pushed an `edge` image on `ba13498`; on `5394842` it stopped at release-please until owner action 1 below is done.
 
-## Phase 2 (auth hardening) — done, uncommitted
-
-Everything below is implemented, verified, and staged for commit; see `git status`:
+## Phase 2 (auth hardening) — done, on `main` as `249ee1c`
 
 - **Roles:** `admin`/`operator`/`viewer` via Better Auth access control (`src/lib/server/auth.ts`); pure role→permission logic in `src/lib/roles.ts` (client-safe), request guards `requireUser`/`requirePermission` in `src/lib/server/roles.ts`. Permissions: `read` (all) → `operate` (operator+) → `configure` (admin).
 - **Login throttling:** `src/lib/server/throttle.ts` — confirmed gap: `auth.api.signInEmail` from a form action bypasses BA's HTTP rate limiter (`onRequestRateLimit` runs in the router only). Own limiter stores `login:<email>:<ip>` keys in BA's `rate_limit` table: 5 failures per 10-min window per email+IP, cleared on success.
@@ -53,7 +51,23 @@ Everything below is implemented, verified, and staged for commit; see `git statu
 - **Recovery CLI:** `npm run recover -- <email>` (`scripts/recover.mjs`) — new random password via BA's own `hashPassword`, clears 2FA rows + sessions + ban + throttle keys, writes an audit row.
 - **Tests:** 41 unit (roles matrix, throttle windows/scope/clear, XFF trust) + `e2e/security.spec.ts` (unauthenticated redirect, 403 for viewer on admin UI, full TOTP enable→sign-in→disable, throttle trip + identity scoping, sign-out).
 
-Verified: `npm run lint`, `npm run check` (0/0), `npm test` (41), `npm run build`, `npx playwright test` (16 + setup; screenshots opt-in), `node scripts/contrast-report.mjs`, recovery CLI against a real DB.
+## Phase 3 (read-only monitoring) — done, uncommitted
+
+Everything below is implemented and verified; see `git status`. Spec phase-3 checklist updated.
+
+- **LAPI client** `src/lib/server/crowdsec/client.ts`: `POST /v1/watchers/login` → JWT cached until expiry, one refresh on 401; typed `/v1/alerts` (since/until/limit/scenario/ip/origin); `LapiError.kind` ∈ `auth|unreachable|http|bad_response` drives the diagnostics on the settings page; `undici` Agent only when `insecureTls` is opted in.
+- **Projection schema** (migration `0002`): `server` (encrypted `lapi_password_enc`/`bouncer_key_enc` via `secrets.ts`), `site`, `alert` (+`context`/`events_meta` JSON), `alert_site` (`signal` ∈ context/event_meta/datasource), `decision` (`expired` reconciled from `until`), `sync_state` (cursor/lastError/partial per source), `metric_sample`, `activity_rollup` (deterministic `hour|site|scenario|cn` pk).
+- **Worker** `worker.ts`: started once in the `init` hook after migrations; module-guard (single process); 30 s tick, no overlap; idle until a connection exists; errors land in `sync_state`.
+- **Sync** `sync.ts`: `since`-cursor paging (500/page, ≤40 pages, 30-day bounded first import), upserts by upstream id, per-alert decision/alert_site replacement, CAPI-only alerts skipped, expiry reconcile + `pruneExpired`.
+- **Metrics** `metrics.ts`/`scrape.ts`: Prometheus text parser + whitelist; version from `cs_info` updates `server.crowdsec_version`; CAPI volume from `cs_active_decisions`.
+- **Attribution** `attribution.ts`: `target_fqdn` context → event meta → datasource prefix map → unattributed; learned sites auto-insert.
+- **UI:** `/settings/crowdsec` (connect/test/syncNow/disconnect, `configure`-only); `/alerts` + `/decisions` + `/ip/[ip]` (`read`); `SyncBanner` stale/partial/not-connected states; `Pager`; nav + palette entries.
+- **Live overview** `live-overview.ts`: replaces fixtures when connected — LAPI/metrics/projection server stamps, per-site N/C cells (phase-5 tests named as next steps), C2 unattributed + FI read-only observations, activity/scenarios from rollups, CAPI volume measurement.
+- **Tests:** 28 unit (`crowdsec-{client,metrics,attribution,sync}`; sync runs real migrations on in-memory libsql) + `e2e/crowdsec.spec.ts` (bad-credentials diagnostic, connect→sync, CAPI exclusion, filters, expired decisions, IP drill-down, live overview, 503 outage → `SyncBanner` + recovery). Mock LAPI: `e2e/mock-lapi.mjs` on :8090 (started by `webServer[]` in playwright.config; `/_down?set=1` toggles the outage).
+
+Verified: `npm run check` 0/0, `npm run lint` clean, `npm test` 69, `npm run build`, full `npx playwright test` 24 pass (+7 skipped screenshots), new pages visually reviewed.
+
+**Not yet:** attack map (geo fields are stored), full capability-tier display (version only), observer-bouncer per-IP lookup UI, reference-host connect (owner action 4), v0.1.0 tag (release-please PR after owner action 1).
 
 ## Actions only the owner can take
 
@@ -64,12 +78,12 @@ Verified: `npm run lint`, `npm run check` (0/0), `npm test` (41), `npm run build
 
 ## Next steps, in order
 
-### 1. Phase 3: read-only CrowdSec monitoring, then release v0.1.0
+### 1. Finish phase 3 → release v0.1.0
 
-- Follow spec section 4 (capability tiers, exact LAPI routes) and the phase 3 checklist.
-- Build in this order: the typed LAPI client (watcher credentials or mTLS), worker-owned incremental alert sync, CAPI excluded by default, metrics scraping, site attribution, hourly rollups, then replace the overview fixtures with live data.
-- Use the reference host read-only. Its LAPI and metrics listen on 127.0.0.1, so the dashboard needs host networking there.
+- Remaining phase-3 items: attack map from stored geo fields, full capability-tier display, observer-bouncer per-IP lookup UI, reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 - To release, merge the release-please PR (after owner action 1).
+
+### 2. Phase 4 (v0.2.0): decisions, allowlists, notifications — spec checklist.
 
 Later phases (4–13) are fully described in the spec.
 

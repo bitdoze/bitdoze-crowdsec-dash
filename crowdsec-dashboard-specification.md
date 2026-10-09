@@ -700,6 +700,7 @@ Checked boxes below are complete; partially complete items say what remains.
 - 2026-10-09: CI fixes and image hardening (Debian updates, npm removed from runtime). The interrupted design-system work is parked on branch `wip/design-system` (does not type-check yet). `HANDOFF.md` records state, owner actions, and next steps.
 - 2026-10-09: "Inspection Record" design system landed on `wip/design-system`: OKLCH themes (light paper / dark carbon copy), Public Sans, stamp-violet accent, six status stamps, component set (Module, Stamp, Evidence, Menu, Sheet, Palette, Field, FilterSelect, CodeBlock, ActivityChart, ScenarioRamp), app shell (sidebar + header + filters + Ctrl K), overview page with schedule/evidence/observations/measurements, restyled `/login` and `/setup`, overview types and `before`/`mixed` fixtures gated by `DEMO_FIXTURES` + `?fixture=`, Playwright e2e in CI, `scripts/contrast-report.mjs` (all pairs AA), `DESIGN.md`.
 - 2026-10-09: Phase 2 auth hardening landed on `main`: role model (`admin`/`operator`/`viewer` via Better Auth access control), `requireUser`/`requirePermission` server guards, application-level login throttling (`rate_limit` keys `login:<email>:<ip>` — direct `auth.api.signInEmail` bypasses BA's HTTP rate limiter), TOTP + recovery-code two-factor with a two-step `/login`, `/settings` (2FA, session list/revoke, password change) and `/settings/users` (create/role/ban/remove with self-protection), `audit` table + best-effort `recordAudit`, trusted-proxy `X-Forwarded-For` resolution (`TRUSTED_PROXIES`), `scripts/recover.mjs` lockout recovery, `e2e/security.spec.ts` (redirect target, 403s, full TOTP sign-in, throttle, sign-out).
+- 2026-10-09: Phase 3 read-only monitoring landed: typed LAPI client (`client.ts`, JWT cache + 401 refresh, timeout/backoff, opt-in insecure TLS), worker-owned sync (`worker.ts`, cursor + bounded import + CAPI exclusion + expiry reconciliation + `partial` flag), Prometheus scrape into whitelisted `metric_sample`, alert→site attribution with learned sites (`alert_site.signal`), `/settings/crowdsec` connect/test/sync/disconnect (admin-only), live `OverviewData` mapping with N/C stamps, `/alerts`, `/decisions`, `/ip/[ip]` with filters + pagination + `SyncBanner` stale/partial states, mock LAPI (`e2e/mock-lapi.mjs`) + `e2e/crowdsec.spec.ts` incl. outage/recovery. Pending: attack map, full capability-tier display, reference-host connect (owner action).
 
 ### Phase 0 — Confirm the foundation and compatibility
 
@@ -756,16 +757,16 @@ Checked boxes below are complete; partially complete items say what remains.
 
 **Depends on:** phase 2.
 
-- [ ] Implement the typed LAPI client, credential connection test, timeouts, backoff, and TLS verification.
-- [ ] Add worker-owned alert/decision synchronization with pagination and bounded historical imports.
-- [ ] Reconcile source identities, expiry/deletion, cached history, and interrupted syncs.
-- [ ] Detect available capability tiers (section 4) and show which features each missing tier would unlock.
-- [ ] Exclude CAPI/list origins from alert sync by default; show community blocklist volume from metrics and add the optional observer bouncer key for per-IP lookups.
-- [ ] Scrape the metrics endpoint for acquisition, parser, scenario, AppSec, LAPI, and active-decision counters; expose freshness.
-- [ ] Add overview, alerts, decisions, IP detail, filtering, pagination, command palette, and stale/partial-data states.
-- [ ] Attribute alerts to sites from alert context, event metadata, and log source; show unattributed counts and the guided fix (install `crowdsecurity/http_extended`, adjust log format).
-- [ ] Implement hourly rollups, the first bounded time-series and scenario charts, and the attack map from alert geo fields; label source and freshness and support record drill-down.
-- [ ] Connect a real existing installation (including the reference host) without changing its configuration.
+- [x] Implement the typed LAPI client, credential connection test, timeouts, backoff, and TLS verification. _`src/lib/server/crowdsec/client.ts`; insecure TLS is opt-in._
+- [x] Add worker-owned alert/decision synchronization with pagination and bounded historical imports. _`sync.ts` + `worker.ts` (30 s tick, init-hook start, no page-load polling)._
+- [x] Reconcile source identities, expiry/deletion, cached history, and interrupted syncs. _Projection upserts by upstream id; decisions/alert_sites replaced per alert; expiry reconciled from `until`; cursor resume + `partial` flag._
+- [ ] Detect available capability tiers (section 4) and show which features each missing tier would unlock. _Partial: version surfaced from `cs_info`; full tier map pending._
+- [x] Exclude CAPI/list origins from alert sync by default; show community blocklist volume from metrics and add the optional observer bouncer key for per-IP lookups. _Central-only alerts skipped (`isCentralOnly`); CAPI volume from `cs_active_decisions`; bouncer key stored encrypted (lookup UI pending)._
+- [x] Scrape the metrics endpoint for acquisition, parser, scenario, AppSec, LAPI, and active-decision counters; expose freshness. _`scrape.ts` + whitelisted `metric_sample` rows; freshness in `sync_state`._
+- [x] Add overview, alerts, decisions, IP detail, filtering, pagination, command palette, and stale/partial-data states. _`/alerts`, `/decisions`, `/ip/[ip]`; SyncBanner for stale/partial; palette + nav wired._
+- [x] Attribute alerts to sites from alert context, event metadata, and log source; show unattributed counts and the guided fix (install `crowdsecurity/http_extended`, adjust log format). _`attribution.ts`, `alert_site.signal`, learned sites, unattributed C2 observation with fix._
+- [ ] Implement hourly rollups, the first bounded time-series and scenario charts, and the attack map from alert geo fields; label source and freshness and support record drill-down. _Rollups + activity/scenario charts done; attack map pending._
+- [ ] Connect a real existing installation (including the reference host) without changing its configuration. _Verified against a mock LAPI in e2e; the reference host awaits owner action 4._
 
 **Acceptance gate:** the UI accurately represents live and cached state during normal operation, outages, and recovery; no protection configuration is changed by connecting.
 

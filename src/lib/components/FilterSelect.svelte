@@ -12,6 +12,8 @@
 		label: string;
 		value: string;
 		options: Option[];
+		/** Form field name — set when the select lives inside a GET form. */
+		name?: string;
 		disabled?: boolean;
 		hideLabel?: boolean;
 		class?: string;
@@ -22,6 +24,7 @@
 		label,
 		value,
 		options,
+		name,
 		disabled = false,
 		hideLabel = false,
 		class: className,
@@ -43,6 +46,7 @@
 	<span class="relative inline-flex items-center">
 		<select
 			{id}
+			{name}
 			{disabled}
 			class="cursor-pointer appearance-none rounded-[3px] border border-line bg-sheet py-1 pr-6 pl-2 text-sm text-ink hover:border-ink-3 disabled:cursor-not-allowed disabled:text-ink-3"
 			{value}

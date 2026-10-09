@@ -15,12 +15,20 @@ export default defineConfig({
 	expect: { timeout: 7_500 },
 	retries: process.env.CI ? 1 : 0,
 	reporter: process.env.CI ? 'github' : 'list',
-	webServer: {
-		command: `ORIGIN=${baseURL} DATA_DIR=.e2e-data SETUP_TOKEN=e2e-setup-token DEMO_FIXTURES=true HOST=127.0.0.1 PORT=${port} node server/index.js`,
-		url: `${baseURL}/healthz`,
-		reuseExistingServer: !process.env.CI,
-		timeout: 30_000
-	},
+	webServer: [
+		{
+			command: `ORIGIN=${baseURL} DATA_DIR=.e2e-data SETUP_TOKEN=e2e-setup-token DEMO_FIXTURES=true HOST=127.0.0.1 PORT=${port} node server/index.js`,
+			url: `${baseURL}/healthz`,
+			reuseExistingServer: !process.env.CI,
+			timeout: 30_000
+		},
+		{
+			command: 'node e2e/mock-lapi.mjs',
+			url: 'http://127.0.0.1:8090/v1/metrics',
+			reuseExistingServer: !process.env.CI,
+			timeout: 15_000
+		}
+	],
 	use: {
 		baseURL,
 		trace: 'retain-on-failure'

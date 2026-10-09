@@ -9,7 +9,7 @@ Start with `HANDOFF.md`: current state, owner decisions, and the next steps in o
 - `npm run check` — `svelte-kit sync` + `svelte-check`
 - `npm run lint` — `prettier --check . && eslint .` (run `npm run format` to fix)
 - `npm test` — `vitest run` (tests in `tests/`, no network)
-- `npm run test:e2e` — Playwright against a built production server (auto-builds; uses `.e2e-data`, resets it per run)
+- `npm run test:e2e` — Playwright against a built production server (auto-builds; uses `.e2e-data`, resets it per run). A mock CrowdSec LAPI (`e2e/mock-lapi.mjs`, port 8090, `/_down?set=1` toggles a 503 outage) starts alongside.
 - `SCREENSHOTS=1 npm run test:e2e` — also captures light/dark × desktop/mobile PNGs to `.impeccable/review/` (gitignored)
 - `node scripts/contrast-report.mjs` — WCAG contrast audit of the `layout.css` tokens (exits 1 on failure)
 - `npm run build` — adapter-node build into `build/`

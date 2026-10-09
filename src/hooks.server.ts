@@ -13,6 +13,10 @@ export const init: ServerInit = async () => {
 
 	const [{ value: users }] = await db.select({ value: count() }).from(user);
 	if (users === 0) beginSetup();
+
+	// Worker-owned polling — starts idle until a CrowdSec connection exists.
+	const { startWorker } = await import('#lib/server/crowdsec/worker.ts');
+	startWorker();
 };
 
 const handleBetterAuth: Handle = async ({ event, resolve }) => {

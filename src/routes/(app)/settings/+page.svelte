@@ -5,7 +5,8 @@
 	import Field from '#lib/components/Field.svelte';
 	import Button from '#lib/components/Button.svelte';
 	import CodeBlock from '#lib/components/CodeBlock.svelte';
-	import { primaryRole } from '#lib/roles.ts';
+	import { primaryRole, hasPermission } from '#lib/roles.ts';
+	import { resolve } from '$app/paths';
 
 	let { data, form }: PageProps & { form: ActionData } = $props();
 
@@ -32,6 +33,14 @@
 				{data.user.email} · role <span class="font-semibold text-ink-2">{role}</span>
 			</p>
 		</div>
+		{#if hasPermission(data.user.role, 'configure')}
+			<nav class="flex gap-4 text-xs text-ink-3">
+				<a href={resolve('/(app)/settings/crowdsec')} class="text-accent underline"
+					>CrowdSec connection</a
+				>
+				<a href={resolve('/(app)/settings/users')} class="text-accent underline">Users</a>
+			</nav>
+		{/if}
 	</header>
 
 	{#if form?.notice}

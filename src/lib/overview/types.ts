@@ -157,7 +157,7 @@ export interface Verdict {
 
 export interface OverviewData {
 	/** Where the numbers came from. 'fixture' is always labeled in the UI. */
-	source: 'fixture' | 'none';
+	source: 'fixture' | 'none' | 'live';
 	server: {
 		name: string | null;
 		crowdsecVersion: string | null;

@@ -46,8 +46,20 @@
 			active: page.url.pathname === '/'
 		},
 		{ id: 'sites', label: 'Sites', icon: Globe, planned: true as const },
-		{ id: 'alerts', label: 'Alerts', icon: Siren, planned: true as const },
-		{ id: 'decisions', label: 'Decisions', icon: Ban, planned: true as const },
+		{
+			id: 'alerts',
+			label: 'Alerts',
+			icon: Siren,
+			href: resolve('/(app)/alerts'),
+			active: page.url.pathname.startsWith('/alerts')
+		},
+		{
+			id: 'decisions',
+			label: 'Decisions',
+			icon: Ban,
+			href: resolve('/(app)/decisions'),
+			active: page.url.pathname.startsWith('/decisions')
+		},
 		{ id: 'protection', label: 'Protection', icon: ShieldCheck, planned: true as const },
 		{ id: 'notifications', label: 'Notifications', icon: Bell, planned: true as const },
 		{ id: 'system', label: 'System', icon: Activity, planned: true as const },
@@ -90,6 +102,12 @@
 	const paletteItems: PaletteItem[] = $derived([
 		{ id: 'go-overview', label: 'Go to Overview', action: () => goto(resolve('/(app)')) },
 		{ id: 'go-settings', label: 'Go to Settings', action: () => goto(resolve('/(app)/settings')) },
+		{ id: 'go-alerts', label: 'Go to Alerts', action: () => goto(resolve('/(app)/alerts')) },
+		{
+			id: 'go-decisions',
+			label: 'Go to Decisions',
+			action: () => goto(resolve('/(app)/decisions'))
+		},
 		{ id: 'search-ip', label: 'Search by IP address', hint: 'v0.1.0', disabled: true },
 		...nav
 			.filter((item) => item.planned)

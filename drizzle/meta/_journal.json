@@ -15,6 +15,13 @@
       "when": 1791549499664,
       "tag": "0001_clumsy_blindfold",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791552315053,
+      "tag": "0002_fluffy_lady_vermin",
+      "breakpoints": true
     }
   ]
 }
