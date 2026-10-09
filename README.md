@@ -1,56 +1,40 @@
-# sv
+# bitdoze-crowdsec-dash
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+A self-hosted web dashboard for [CrowdSec](https://www.crowdsec.net/): read-only
+monitoring, decisions, and guided proxy/WAF configuration.
 
-## Creating a project
+**Status: pre-alpha.** The specification and implementation plan live in
+[`crowdsec-dashboard-specification.md`](./crowdsec-dashboard-specification.md).
 
-If you're seeing this, you've probably already done this step. Congrats!
+## Development
 
-```sh
-# create a new project
-npx sv create my-app
-```
-
-To recreate this project with the same configuration:
+Requires Node >= 22.17 (`.nvmrc` pins 24) and npm.
 
 ```sh
-# recreate this project
-npx sv@1.1.1 create --template minimal --types ts --add drizzle="database:sqlite+sqlite:libsql" better-auth="demo:password" tailwindcss="plugins:typography,forms" enhanced-img prettier eslint mdsvex --install npm bitdoze-crowdsec-dash
-```
-
-## Adding features
-
-Add features to your project with `sv add`:
-
-```sh
-npx sv add
-```
-
-For example, to add Tailwind CSS:
-
-```sh
-npx sv add tailwindcss
-```
-
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
+npm ci
 npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
 ```
 
-## Building
+On first start the server runs migrations, then prints a one-time setup token:
 
-To create a production version of your app:
+```
+Setup required: open http://localhost:5173/setup and enter token: <token>
+```
+
+Open `/setup`, enter the token, and create the first administrator account.
+
+## Production
 
 ```sh
 npm run build
+ORIGIN=http://localhost:3000 npm start
 ```
 
-You can preview the production build with `npm run preview`.
+`ORIGIN` is the public URL of the app and is required by the production server
+(`server/index.js`); it pins the request origin because adapter-node 6 cannot
+derive it from the environment. `DATA_DIR` (default `./data`) holds the SQLite
+database and auto-generated secrets.
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+## License
+
+MIT — see [LICENSE](./LICENSE).

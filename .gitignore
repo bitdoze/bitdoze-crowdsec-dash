@@ -23,3 +23,11 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 # SQLite
 *.db
+# Package Managers
+pnpm-lock.yaml
+yarn.lock
+bun.lock
+bun.lockb
+
+# App data (local database, generated secrets)
+/data

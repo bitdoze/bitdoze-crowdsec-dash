@@ -690,24 +690,31 @@ Each phase from 3 onward ends in a tagged pre-1.0 release, so the project is use
 | v1.0.0-rc.N | 12 | Release candidate | Cross-component verification and release artifacts |
 | v1.0.0 | 13 | Stable | v1 boundary from section 2 |
 
+### Progress log
+
+Checked boxes below are complete; partially complete items say what remains.
+
+- 2026-10-09: Specification reviewed and committed; MIT license; Cloudflare Free-plan default decided.
+- 2026-10-09: Foundation landed: scaffold cleanup, adapter-node with origin-pinning server (`server/`), migrations and SQLite pragmas at startup, secret resolution, health/readiness endpoints, first-admin bootstrap with one-time token, login/logout, unit tests. Visual direction chosen ("Inspection Record", `.impeccable/surfaces/`); product record in `PRODUCT.md`.
+
 ### Phase 0 — Confirm the foundation and compatibility
 
 **Depends on:** this specification.
 
-- [ ] Select the project name, license, repository layout, package manager, and Linux support baseline.
-- [ ] Create a minimal Kit 3 production build using the current official CLI and Node adapter.
-- [ ] Pin supported versions of Node, Kit, Svelte, TypeScript, Vite, Tailwind, Better Auth, Drizzle, and libSQL.
-- [ ] Verify `@tailwindcss/vite`, shadcn-svelte/Bits UI, `@lucide/svelte`, LayerChart, the Svelte TanStack Table adapter, and the chosen validation library in one Kit 3 production fixture.
+- [ ] Select the project name, license, repository layout, package manager, and Linux support baseline. _Done: name, MIT, npm, single-package layout. Remaining: Linux baseline._
+- [x] Create a minimal Kit 3 production build using the current official CLI and Node adapter.
+- [x] Pin supported versions of Node, Kit, Svelte, TypeScript, Vite, Tailwind, Better Auth, Drizzle, and libSQL (`package-lock.json`, `engines`, `.nvmrc`).
+- [ ] Verify `@tailwindcss/vite`, shadcn-svelte/Bits UI, `@lucide/svelte`, LayerChart, the Svelte TanStack Table adapter, and the chosen validation library in one Kit 3 production fixture. _Done in the probe except TanStack Table and Zod._
 - [ ] Test a themed dialog/form, an accessible icon button, a responsive chart, and a server-paginated table; check SSR/hydration and Kit 3 import conventions.
-- [ ] Verify Kit 3 login/session/logout and server-action cookies with Better Auth and Drizzle in the production build.
-- [ ] Verify database creation/migration/restart persistence and native dependencies on amd64 and arm64.
-- [ ] Verify trusted-origin/runtime configuration for a reusable Docker image. The probe confirmed that old `ORIGIN` recipes no longer apply to adapter-node 6 (section 3.2); build and test the custom server entry over plain HTTP, behind a TLS proxy, and with spoofed forwarding headers.
-- [ ] Resolve the Better Auth Kit peer conflict with a scoped override and make `npm ci` pass in CI.
+- [x] Verify Kit 3 login/session/logout and server-action cookies with Better Auth and Drizzle in the production build.
+- [ ] Verify database creation/migration/restart persistence and native dependencies on amd64 and arm64. _Done on amd64; arm64 remains._
+- [ ] Verify trusted-origin/runtime configuration for a reusable Docker image. The probe confirmed that old `ORIGIN` recipes no longer apply to adapter-node 6 (section 3.2); build and test the custom server entry over plain HTTP, behind a TLS proxy, and with spoofed forwarding headers. _Done: custom server, plain HTTP, spoofed headers. Remaining: Docker image and TLS proxy._
+- [ ] Resolve the Better Auth Kit peer conflict with a scoped override and make `npm ci` pass in CI. _Done locally with `overrides`; CI remains._
 - [ ] Run a local CrowdSec + Traefik + two-site fixture to validate LAPI, decisions, logs, and AppSec expectations.
 - [ ] Add the reference host (native CrowdSec 1.7.6, Caddy in Docker; Appendix B) as the unmodified "before" fixture for the mixed topology. Only read-only access (tiers A–C) is used against it; configuration changes are tested on separate disposable fixtures. The only permitted change is registering the dashboard's own watcher machine (and optional observer bouncer key), with the owner's approval; it does not alter protection.
 - [ ] Confirm the capability-tier table in section 4 against CrowdSec 1.7.x and 1.8.x: LAPI routes and auth types, metric names, `cscli -o json` output shapes, and alert-context delivery to LAPI.
 - [ ] Record supported upstream versions and administrative operations actually available through API versus agent/CLI.
-- [ ] Confirm the SvelteKit 3 `init` hook for starting the in-process worker, and the single-process memory footprint.
+- [ ] Confirm the SvelteKit 3 `init` hook for starting the in-process worker, and the single-process memory footprint. _Hook confirmed and used for migrations; footprint not measured yet._
 - [ ] Confirm Go for the host agent (single static binary for native hosts, small image for Docker), with TypeScript for the dashboard; generate shared contract types from one schema source.
 
 **Acceptance gate:** the new framework/auth/database stack builds and runs in Docker, and the upstream protection path works independently of the future dashboard. Record compatibility problems before expanding the UI.
@@ -717,12 +724,12 @@ Each phase from 3 onward ends in a tagged pre-1.0 release, so the project is use
 **Depends on:** phase 0.
 
 - [ ] Establish web, worker, shared contracts, agent, deployment, docs, and fixture directories.
-- [ ] Add formatting, linting, type checking, focused test commands, and CI build checks.
+- [ ] Add formatting, linting, type checking, focused test commands, and CI build checks. _Commands done; CI remains._
 - [ ] Add the release pipeline now (release-please, multi-arch GHCR images, signatures, SBOM) and publish `edge` images from `main`, so v0.1.0 is a tag rather than a project.
-- [ ] Run the design pass from section 5.9 and turn it into theme tokens before building screens.
-- [ ] Define initial migrations for auth, server/site inventory, jobs, configuration revisions, notifications, and audit records.
-- [ ] Add secret-file support, encryption-key handling, structured logging, and redaction.
-- [ ] Add first administrator bootstrap and protected app shell.
+- [ ] Run the design pass from section 5.9 and turn it into theme tokens before building screens. _Direction chosen; tokens remain._
+- [ ] Define initial migrations for auth, server/site inventory, jobs, configuration revisions, notifications, and audit records. _Auth migration done; domain tables remain._
+- [ ] Add secret-file support, encryption-key handling, structured logging, and redaction. _Secret resolution (env, `_FILE`, generated 0600 file) done._
+- [ ] Add first administrator bootstrap and protected app shell. _Bootstrap and route guard done; designed shell remains._
 - [ ] Add shared theme tokens, the selected UI components, Lucide icon conventions, and reusable table/chart shells; keep installation versions pinned.
 - [ ] Add initial Dockerfiles/Compose, persistent data volume, private networks, and health endpoints.
 - [ ] Define stable component ownership and versioned contract conventions.

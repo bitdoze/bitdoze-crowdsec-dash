@@ -5,6 +5,13 @@ yarn.lock
 bun.lock
 bun.lockb
 
-# Miscellaneous
-/static/
-/drizzle/
+# Generated
+.svelte-kit
+build
+drizzle
+
+# App data
+data
+
+# Spec document is maintained by hand, not formatted
+crowdsec-dashboard-specification.md
