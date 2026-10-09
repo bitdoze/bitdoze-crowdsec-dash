@@ -22,6 +22,7 @@ import {
 	validateAliases,
 	validateCollections
 } from '#lib/sites.ts';
+import { downsample } from '#lib/activity.ts';
 import { agentHello, callAgent } from '#lib/server/agent/client.ts';
 import { enqueue } from '#lib/server/jobs/queue.ts';
 import { discoverTraefik, matchSite, parseDockerPs } from '#lib/server/protect/traefik.ts';
@@ -65,9 +66,13 @@ export const load: PageServerLoad = async (event) => {
 		if (typeof d === 'string' && /^\/\S{1,200}$/.test(d))
 			proxyRoots.push(d.endsWith('/') ? d : `${d}/`);
 	}
-	// Site activity: recent attributed alerts + the last 24h of the hourly
-	// rollup for the trend strip. Level-4 WAF gating needs observed CRS
-	// alerts (level 3 runs CRS out-of-band precisely to produce them).
+	// Site activity: recent attributed alerts + the hourly rollup over the
+	// selected range, downsampled server-side to a bounded chart width
+	// (spec §9: long-range downsampling). Level-4 WAF gating needs observed
+	// CRS alerts (level 3 runs CRS out-of-band precisely to produce them).
+	const ACT_RANGES = { '24h': 24 * 3600_000, '7d': 7 * 24 * 3600_000, '30d': 30 * 24 * 3600_000 };
+	const rangeKey = (event.url.searchParams.get('actRange') ?? '7d') as keyof typeof ACT_RANGES;
+	const actRange = ACT_RANGES[rangeKey] ? rangeKey : '7d';
 	const [recent, rollup, crs] = await Promise.all([
 		db
 			.select({
@@ -88,9 +93,10 @@ export const load: PageServerLoad = async (event) => {
 			})
 			.from(activityRollup)
 			.where(
-				sql`${activityRollup.siteId} = ${s.id} AND ${activityRollup.hour} > ${Date.now() - 7 * 24 * 3600_000}`
+				sql`${activityRollup.siteId} = ${s.id} AND ${activityRollup.hour} > ${Date.now() - ACT_RANGES[actRange]}`
 			)
-			.groupBy(activityRollup.hour),
+			.groupBy(activityRollup.hour)
+			.orderBy(activityRollup.hour),
 		db
 			.select({ n: sql<number>`count(*)` })
 			.from(alertSite)
@@ -105,8 +111,12 @@ export const load: PageServerLoad = async (event) => {
 		proxyRoots,
 		crsAlerts: crs[0]?.n ?? 0,
 		activity: {
+			range: actRange,
 			recent,
-			hours: rollup.map((r) => ({ hour: r.hour, total: r.total }))
+			buckets: downsample(
+				rollup.map((r) => ({ at: r.hour.getTime(), total: r.total })),
+				48
+			)
 		},
 		artifacts: artifacts.map((a) => ({
 			...a,

@@ -8,6 +8,8 @@
 	import FilterSelect from '#lib/components/FilterSelect.svelte';
 	import CodeBlock from '#lib/components/CodeBlock.svelte';
 	import { REMEDIATION_PRESETS, WAF_LEVELS } from '#lib/sites.ts';
+	import { bucketHourLabel, dayLabel } from '#lib/activity.ts';
+	import ActivityChart from '#lib/components/ActivityChart.svelte';
 
 	let { data, form }: PageProps = $props();
 
@@ -57,8 +59,15 @@
 		if (a.observedHash === a.expectedHash) return { state: 'verified' as const, label: 'in sync' };
 		return { state: 'stale' as const, label: 'drifted' };
 	}
-	// 7-day hourly rollup → simple bar trend for the activity module.
-	const trendMax = $derived(Math.max(1, ...data.activity.hours.map((h) => h.total)));
+	// Downsampled rollup → shared chart; day labels for the 30-day range.
+	const actLabel = $derived(data.activity.range === '30d' ? dayLabel : bucketHourLabel);
+	const actPoints = $derived(
+		data.activity.buckets.map((b) => ({
+			at: new Date(b.at).toISOString(),
+			alerts: b.total,
+			decisions: 0
+		}))
+	);
 </script>
 
 <svelte:head><title>{data.site.hostname} · Sites · CrowdSec Dash</title></svelte:head>
@@ -406,17 +415,40 @@
 					</p>
 				{/if}
 			</div>
-			{#if data.activity.hours.length}
-				<div aria-label="Alert volume, last 7 days" role="img" class="flex items-end gap-px">
-					{#each data.activity.hours as h (h.hour)}
-						<div
-							class="w-1.5 bg-accent/70"
-							style:height="{Math.max(2, Math.round((h.total / trendMax) * 48))}px"
-							title="{new Date(h.hour).toLocaleString()}: {h.total} alerts"
-						></div>
+			<div class="min-w-0">
+				<div class="mb-1 flex items-center gap-1 text-[11px]">
+					{#each ['24h', '7d', '30d'] as r (r)}
+						<!-- eslint-disable svelte/no-navigation-without-resolve -->
+						<a
+							href={resolve('/(app)/sites/[id]', { id: data.site.id }) + `?actRange=${r}`}
+							data-sveltekit-noscroll
+							class="rounded-[3px] border px-2 py-0.5 {data.activity.range === r
+								? 'border-accent-outline text-accent'
+								: 'border-line text-ink-3 hover:text-ink-2'}">{r}</a
+						>
+						<!-- eslint-enable svelte/no-navigation-without-resolve -->
 					{/each}
+					<span class="ml-1 text-ink-3">alerts per bucket</span>
 				</div>
-			{/if}
+				{#if data.activity.buckets.length}
+					<ActivityChart data={actPoints} xLabel={actLabel} tickStride={8} />
+					<details class="mt-1">
+						<summary class="cursor-pointer text-xs text-ink-3 hover:text-ink-2">Data table</summary>
+						<table class="mt-1 w-full text-xs">
+							<tbody>
+								{#each data.activity.buckets as b (b.at)}
+									<tr class="border-b border-rule last:border-0">
+										<td class="py-1 font-mono">{actLabel(b.at)}</td>
+										<td class="py-1 text-right font-mono tabular-nums">{b.total}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</details>
+				{:else}
+					<p class="mt-2 text-xs text-ink-3">No alert volume recorded in this range.</p>
+				{/if}
+			</div>
 		</div>
 	</Module>
 

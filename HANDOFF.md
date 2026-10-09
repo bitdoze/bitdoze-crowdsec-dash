@@ -154,20 +154,21 @@ Verified: `check` 0/0, lint clean, `npm test` 162, `npm run build`, `e2e/system.
 
 **Not yet:** the two-sites/real-traffic/IPv6/WAF acceptance gate needs real hosts; distro package installs (`apt install libnginx-mod-http-lua`) stay guided deliberately — the agent never installs packages.
 
-## Phase 9 (website operations + policy UX) — core done, on `main`
+## Phase 9 (website operations + policy UX) — done, on `main`
 
 - **Site policy model (migration 0006–0007):** `site.aliases` (JSON array), `wafLevel` (`off`|`1`–`4`, default `1`), `remediationPreset` (`flat`|`escalating`|`captcha`, default `escalating`), `appsecExclusions` (JSON array of hub collection names), `config_artifact.observedHash`/`observedAt`, `saved_view` table.
 - **Alias-aware attribution:** `siteIndex` returns `byName` + `ambiguous` — primary hostnames win over other sites' claimed aliases, a name claimed by two sites maps to neither (alert stays unattributed, no learned site minted), `setPolicy` validates aliases (`validateAliases`) and refuses names already owned/aliased elsewhere.
 - **WAF levels (spec §5.5):** `WAF_CONFIGS` composes AppSec configs per level; `off` omits the AppSec artifact but keeps detection/bouncer artifacts; level 3 installs `appsec-crs` (out-of-band — alerts without blocking) and level 4 installs `appsec-crs-inband`, gated in `setPolicy` on observed `crowdsecurity/appsec-%` alerts for the site. Per-site exclusion collections render as extra `cscli collections install` lines (`validateCollections` — `author/name` shape).
 - **Remediation presets (spec §5.7):** distinct `profiles.yaml` content per preset — flat fixed 4h, escalating `duration_expr` on `GetDecisionsCount`, captcha for low-confidence scenarios with a ban fallback.
 - **Drift:** `driftHash` normalizes `<bouncer-key>`/`API_KEY=` values so key substitution never counts as drift; `checkDrift` reads each managed artifact's target via agent `file.read` and stamps `observedHash`/`observedAt`; artifact cards show `in sync`/`drifted` badges + the timestamp.
-- **Investigation UX:** site Activity module (recent attributed alerts + hourly rollup); `/alerts` saved views (`saved_view` — save/reapply chips/delete, audited) plus `Export CSV` honoring `site`/`scenario`/`ip`; `/decisions` `Export CSV` honoring `q`/`expired` — still server-wide by design.
+- **Investigation UX:** site Activity module — recent attributed alerts + the shared `ActivityChart` (lazy `layerchart`, `aria-hidden` with an adjacent `<details>` data table), `actRange` 24h/7d/30d, server-side `downsample()` bucketing (hourly → daily at 30d, ~40 max points), no-data state; `/alerts` saved views (`saved_view` — save/reapply chips/delete, audited) plus `Export CSV` honoring `site`/`scenario`/`ip`; `/decisions` `Export CSV` honoring `q`/`expired` — still server-wide by design.
+- **Recovery + themes:** `AuthShell` footer tells locked-out admins to run `npm run recover -- <email>`; header theme toggle cycles system → light → dark (`data-theme` + `localStorage`, pre-paint bootstrap in `app.html` — no FOUC).
 - **`/system`:** typed hub inventory (collections/parsers/scenarios), simulation status normalized across `cscli` payload shapes, and durable `simulation.set` jobs — global toggle + per-scenario `simulate`/`un-sim` (idempotency `sim:<scope>:<enabled>`, lock `simulation`). Mock `cscli` grew scenario items + a `SIMULATION_STATE` file so status reflects toggles.
 - **Tests:** alias attribution/ambiguity units, WAF-level content + collections + remediation + `driftHash` units, CSV encoder units, one e2e covering alias-attributed AppSec alert → L3→L4 gate → managed apply → drift in-sync → tamper → drifted → scenario simulation toggle.
 
-Verified: `check` 0/0, lint clean, `npm test` 173, `npm run build`, full e2e 41+1 phase-9 test green.
+Verified: `check` 0/0, lint clean, `npm test` 177, `npm run build`, full e2e 42+7 skipped green. All phase-9 checklist items ticked.
 
-**Not yet:** chart accessibility/legends/downsampling and the setup-recovery/keyboard polish bucket stay open on the checklist (no charting components exist yet — Activity renders a text rollup). Captcha remediation needs bouncers that answer captcha — flagged capability-gated in the artifact.
+**Not yet:** captcha remediation needs bouncers that answer captcha — flagged capability-gated in the artifact. Multi-series charts (legends) don't exist yet; every chart is single-series with a data-table alternative.
 
 ## Actions only the owner can take
 
@@ -190,7 +191,7 @@ Later phases (10–13) are fully described in the spec.
 
 ## Gotchas already learned
 
-- **adapter-node 6:** origin handling lives in `server/origin.js`; plain-HTTP form posts fail CSRF without it.
+- **adapter-node 6:** origin handling lives in `server/origin.js`; plain-HTTP form posts fail CSRF without it. Always launch via `node server/index.js` — `node build/index.js` is the raw adapter entry and skips the pinning (403s on every form POST).
 - **`defineEnvVars`:** a variable without `schema` is required. `schema: v => v` makes it optional; returning a value sets a default. The `auth` CLI runs through jiti, so `src/lib/server/config.ts` repeats the defaults.
 - **Better Auth vs Kit 3:** the peer conflict is solved by `overrides` in `package.json`. The Docker prod-deps stage alone uses `--legacy-peer-deps`, to skip optional peers.
 - **drizzle-kit:** `push` needs a TTY; use `npm run db:generate`. Migrations apply at startup.

@@ -368,6 +368,10 @@ test.describe('with a live agent', () => {
 		// The site activity module surfaces it (still on the site page — reload).
 		await page.reload();
 		await expect(page.getByText('appsec-crs-942110')).toBeVisible();
+		// The shared chart + range control render with a table alternative.
+		await page.getByRole('link', { name: '30d', exact: true }).click();
+		await expect(page).toHaveURL(/actRange=30d/);
+		await expect(page.getByText('Data table')).toBeVisible();
 
 		// Now the level-4 save goes through — observe-first flow complete.
 		await page.getByLabel('WAF level').selectOption('4');

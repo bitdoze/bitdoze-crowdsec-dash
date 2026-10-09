@@ -81,7 +81,11 @@
 					<!-- eslint-enable svelte/no-navigation-without-resolve -->
 					<form method="post" action="?/deleteView" class="flex">
 						<input type="hidden" name="id" value={v.id} />
-						<button type="submit" class="pr-1.5 text-xs text-ink-3" title="Delete view">×</button>
+						<button
+							type="submit"
+							class="pr-1.5 text-xs text-ink-3"
+							aria-label="Delete saved view {v.name}">×</button
+						>
 					</form>
 				</span>
 			{/each}

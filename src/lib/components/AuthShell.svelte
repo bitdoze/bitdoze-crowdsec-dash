@@ -28,5 +28,9 @@
 		</div>
 	</div>
 
-	<p class="mt-6 pb-8 text-xs text-ink-3">Self-hosted. Nothing leaves this server.</p>
+	<p class="mt-6 pb-8 text-center text-xs text-ink-3">
+		Self-hosted. Nothing leaves this server.<br />
+		Locked out? On the server run
+		<code class="font-mono">npm run recover -- &lt;email&gt;</code>
+	</p>
 </div>

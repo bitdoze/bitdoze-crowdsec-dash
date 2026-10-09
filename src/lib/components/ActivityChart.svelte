@@ -6,9 +6,13 @@
 
 	interface Props {
 		data: ActivityPoint[];
+		/** Label formatter for a bucket's `at` — defaults to 'HH:00'. */
+		xLabel?: (at: string) => string;
+		/** Show every Nth x tick label (density control for wider ranges). */
+		tickStride?: number;
 	}
 
-	let { data }: Props = $props();
+	let { data, xLabel = hourLabel, tickStride = 6 }: Props = $props();
 
 	// LayerChart is client-only and heavy; it is imported lazily after mount.
 	// The text summary and the data table next to the chart always render.
@@ -24,7 +28,7 @@
 	}>;
 	let BarChart = $state<BarChartComponent | null>(null);
 
-	const points = $derived(data.map((p) => ({ label: hourLabel(p.at), alerts: p.alerts })));
+	const points = $derived(data.map((p) => ({ label: xLabel(p.at), alerts: p.alerts })));
 
 	onMount(async () => {
 		const mod = await import('layerchart');
@@ -44,7 +48,10 @@
 			series={[{ key: 'alerts', label: 'Alerts', value: 'alerts', color: 'var(--color-accent)' }]}
 			props={{
 				xAxis: {
-					format: (d: string) => (Number(d.slice(0, 2)) % 6 === 0 ? d : ''),
+					format: (d: string) => {
+						const i = points.findIndex((p) => p.label === d);
+						return i >= 0 && i % tickStride === 0 ? d : '';
+					},
 					tickLabelProps: { class: 'fill-ink-3', 'font-size': 10 }
 				},
 				yAxis: {

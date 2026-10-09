@@ -17,6 +17,9 @@
 	import Search from '@lucide/svelte/icons/search';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import LogOut from '@lucide/svelte/icons/log-out';
+	import Sun from '@lucide/svelte/icons/sun';
+	import Moon from '@lucide/svelte/icons/moon';
+	import Monitor from '@lucide/svelte/icons/monitor';
 	import type { LayoutProps } from './$types';
 	import Wordmark from '#lib/components/Wordmark.svelte';
 	import Sheet from '#lib/components/Sheet.svelte';
@@ -33,8 +36,27 @@
 	let paletteOpen = $state(false);
 	let isMac = $state(false);
 
+	type ThemePref = 'system' | 'light' | 'dark';
+	let theme = $state<ThemePref>('system');
+	const themeOrder: ThemePref[] = ['system', 'light', 'dark'];
+	const ThemeIcon = $derived(theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor);
+
+	function cycleTheme() {
+		theme = themeOrder[(themeOrder.indexOf(theme) + 1) % themeOrder.length];
+		if (theme === 'system') delete document.documentElement.dataset.theme;
+		else document.documentElement.dataset.theme = theme;
+		try {
+			if (theme === 'system') localStorage.removeItem('bitdoze-theme');
+			else localStorage.setItem('bitdoze-theme', theme);
+		} catch {
+			// storage unavailable — the in-memory preference still applies
+		}
+	}
+
 	onMount(() => {
 		isMac = /mac/i.test(navigator.platform);
+		const t = document.documentElement.dataset.theme;
+		if (t === 'light' || t === 'dark') theme = t;
 	});
 
 	interface NavItem {
@@ -285,6 +307,16 @@
 				<Search size={13} strokeWidth={1.75} aria-hidden="true" />
 				<span class="hidden md:inline">Search or jump to</span>
 				<Kbd>{isMac ? '⌘' : 'Ctrl'} K</Kbd>
+			</button>
+
+			<button
+				type="button"
+				class="inline-flex cursor-pointer items-center justify-center rounded-[3px] p-1.5 text-ink-2 hover:bg-panel hover:text-ink"
+				aria-label={`Theme: ${theme}. Click to switch.`}
+				title={`Theme: ${theme}`}
+				onclick={cycleTheme}
+			>
+				<ThemeIcon size={16} strokeWidth={1.75} aria-hidden="true" />
 			</button>
 
 			<DropdownMenu.Root>
