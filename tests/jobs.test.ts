@@ -287,6 +287,76 @@ describe('config.apply', () => {
 		expect((await detail(d, j2.id))!.job.state).toBe('failed');
 	});
 
+	it('middleware apply: issues a key, substitutes it, never logs it', async () => {
+		const d = await db();
+		const artifactId = await addArtifact(d);
+		behavior['bouncers.add'] = () => ({
+			ok: true,
+			result: { name: 'dash-site-traefik', key: 'SECRETKEY-abc12345' }
+		});
+		behavior['file.backup'] = () => ({ ok: true, result: { backup: '/b/1.bak' } });
+		const content = 'crowdsecLapiKey: <bouncer-key>\n';
+		const { job: j } = await enqueue(d, {
+			kind: 'config.apply',
+			params: {
+				path: '/etc/traefik/dynamic/crowdsec.yaml',
+				content,
+				artifactId,
+				bouncerName: 'dash-site-traefik'
+			}
+		});
+		await drainJobs(d, 'w');
+		const got = await detail(d, j.id);
+		expect(got!.job.state).toBe('succeeded');
+		expect(got!.steps.map((s) => s.name)).toEqual([
+			'issue bouncer key dash-site-traefik',
+			'backup /etc/traefik/dynamic/crowdsec.yaml',
+			'write /etc/traefik/dynamic/crowdsec.yaml',
+			'mark artifact applied'
+		]);
+		// The written file carries the real key; no stored detail leaks it.
+		const write = seenOps.find((s) => s.op === 'file.write');
+		expect(write!.params.content).toBe('crowdsecLapiKey: SECRETKEY-abc12345\n');
+		expect(JSON.stringify(got!.steps)).not.toContain('SECRETKEY');
+	});
+
+	it('re-issues the key on resume — secrets never persist across workers', async () => {
+		const d = await db();
+		let adds = 0;
+		behavior['bouncers.add'] = () => {
+			adds++;
+			return { ok: true, result: { name: 'b', key: `KEY-000${adds}` } };
+		};
+		behavior['file.backup'] = () => ({ ok: true, result: { backup: '/b/1.bak' } });
+		const { job: j } = await enqueue(d, {
+			kind: 'config.apply',
+			params: {
+				path: '/etc/t/m.yaml',
+				content: 'k: <bouncer-key>',
+				bouncerName: 'b'
+			}
+		});
+		// Run to success, then simulate a crash where write never landed:
+		// key+backup succeeded, write is rewound to failed, job back to running.
+		await drainJobs(d, 'w');
+		expect((await detail(d, j.id))!.job.state).toBe('succeeded');
+		await d
+			.update(jobStep)
+			.set({ state: 'failed' })
+			.where(eq(jobStep.id, `${j.id}|2`));
+		await d
+			.update(job)
+			.set({ state: 'running', leasedBy: 'dead', leaseUntil: new Date(Date.now() - 1000) })
+			.where(eq(job.id, j.id));
+		await drainJobs(d, 'w2');
+		const got = await detail(d, j.id);
+		expect(got!.job.state).toBe('succeeded');
+		// The ephemeral key step re-ran (KEY-0002) and the resumed write got it.
+		expect(adds).toBe(2);
+		const write = seenOps.findLast((s) => s.op === 'file.write');
+		expect(write!.params.content).toBe('k: KEY-0002');
+	});
+
 	it('resumes a crashed job without re-running succeeded steps', async () => {
 		const d = await db();
 		behavior['file.backup'] = () => ({ ok: true, result: { backup: '/b/1.bak' } });

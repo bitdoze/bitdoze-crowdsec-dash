@@ -18,6 +18,11 @@ export type PlanInput = {
 	lapiUrl: string;
 	/** Directory CrowdSec can read access logs from. */
 	logDir: string;
+	/**
+	 * Traefik file-provider directory on the host — middleware files written
+	 * here are picked up live (watch: true). Defaults to /etc/traefik/dynamic.
+	 */
+	dynamicDir?: string;
 };
 
 export type Artifact = {
@@ -27,9 +32,11 @@ export type Artifact = {
 		| 'collections'
 		| 'real_ip'
 		| 'bouncer'
+		| 'middleware'
 		| 'appsec'
 		| 'remediation'
-		| 'compose';
+		| 'compose'
+		| 'demo';
 	title: string;
 	format: 'yaml' | 'caddyfile' | 'nginx' | 'toml' | 'shell' | 'compose';
 	content: string;
@@ -247,29 +254,48 @@ accessLog:
 ${input.cloudflare ? '        # Cloudflare published ranges — keep current (https://www.cloudflare.com/ips/).\n        - "173.245.48.0/20"\n        - "103.21.244.0/22"\n        - "103.22.200.0/22"\n        - "103.31.4.0/22"\n        - "141.101.64.0/18"\n        - "108.162.192.0/18"\n        - "190.93.240.0/20"\n        - "188.114.96.0/20"\n        - "197.234.240.0/22"\n        - "198.41.128.0/17"\n        - "162.158.0.0/15"\n        - "104.16.0.0/13"\n        - "104.24.0.0/14"\n        - "172.64.0.0/13"\n        - "131.0.72.0/22"' : '        - "10.0.0.0/8"\n        - "172.16.0.0/12"\n        - "192.168.0.0/16"'}
 `
 	};
+	const routerName = input.hostname.replace(/[^a-z0-9]/g, '-');
 	const bouncer: Artifact = {
 		kind: 'bouncer',
-		title: 'Traefik bouncer plugin + middleware for this router',
+		title: 'Traefik static config — bouncer plugin + file provider',
 		format: 'yaml',
-		content: `# Static config: enable the bouncer plugin once.
+		content: `# traefik.yaml (static config) — needs a Traefik restart.
 experimental:
   plugins:
     crowdsec-bouncer:
       moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
       version: v1.7.1
-
-# Dynamic config — attach the middleware to ${input.hostname}'s router.
+providers:
+  file:
+    directory: ${input.dynamicDir ?? '/etc/traefik/dynamic'}
+    watch: true    # the middleware artifact below reloads live from here
+`
+	};
+	const middleware: Artifact = {
+		kind: 'middleware',
+		title: `Traefik dynamic middleware file for ${input.hostname}`,
+		format: 'yaml',
+		// Complete file — managed apply writes it and Traefik reloads live.
+		content: `# ${input.dynamicDir ?? '/etc/traefik/dynamic'}/crowdsec-${routerName}.yaml
+# The file provider watches this directory — no Traefik restart needed.
 http:
   middlewares:
-    crowdsec:
+    crowdsec-${routerName}:
       plugin:
         crowdsec-bouncer:
           enabled: true
-          crowdsecLapiKey: <bouncer-key>   # cscli bouncers add ${input.hostname}-traefik
+          crowdsecLapiKey: <bouncer-key>   # issued by the managed apply job
           crowdsecLapiHost: ${input.lapiUrl.replace(/^https?:\/\//, '')}
           crowdsecMode: stream
-          forwardedHeadersTrustedIPs: ${input.cloudflare ? 'cf-connecting-ip trusted ranges' : '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'}
+          forwardedHeadersTrustedIPs: ${input.cloudflare ? '173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22' : '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'}
           # crowdsecAppsecEnabled: true    # uncomment for inline WAF
+  routers:
+    ${routerName}:
+      rule: Host(\`${input.hostname}\`)
+      middlewares: [crowdsec-${routerName}]
+#   ^ With the docker provider the router usually lives on the app's
+#     container labels instead — then attach by label instead:
+#     traefik.http.routers.${routerName}.middlewares=crowdsec-${routerName}
 `
 	};
 	const appsec: Artifact = {
@@ -294,23 +320,83 @@ listen_addr: 0.0.0.0:7422
 					content: `services:
   app:
     labels:
-      - "traefik.http.routers.${input.hostname.replace(/[^a-z0-9]/g, '-')}.middlewares=crowdsec"
+      - "traefik.http.routers.${routerName}.middlewares=crowdsec-${routerName}"
       # Opt the container's logs into CrowdSec acquisition:
       - "crowdsec.enable=true"
       - "crowdsec.labels.type=traefik"
 `
 				}
 			: null;
+	const demo: Artifact | null = input.runtime === 'docker' ? traefikDemo(input, routerName) : null;
 	return [
 		accessLog,
 		realIp,
 		bouncer,
+		middleware,
 		appsec,
 		acquisition(input),
 		collections(input),
 		remediation(),
-		...(compose ? [compose] : [])
+		...(compose ? [compose] : []),
+		...(demo ? [demo] : [])
 	];
+}
+
+/**
+ * A standalone demonstration stack (spec 7): traefik with the bouncer plugin
+ * and file provider, CrowdSec with acquis + collections, and one labeled demo
+ * app routed on this site's hostname. Guided — deploying a stack is the
+ * administrator's decision.
+ */
+function traefikDemo(input: PlanInput, routerName: string): Artifact {
+	const dyn = input.dynamicDir ?? '/etc/traefik/dynamic';
+	return {
+		kind: 'demo',
+		title: 'Demonstration stack — Traefik + CrowdSec + this site',
+		format: 'compose',
+		content: `# Guided only — run this in a scratch directory, not over production.
+services:
+  traefik:
+    image: traefik:v3.4
+    command:
+      - --api.insecure=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.file.directory=${dyn}
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --accesslog=true
+      - --accesslog.format=json
+      - --accesslog.filepath=/logs/traefik-access.log
+      - --experimental.plugins.crowdsec-bouncer.modulename=github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+      - --experimental.plugins.crowdsec-bouncer.version=v1.7.1
+    ports: ["80:80"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./dynamic:${dyn}
+      - ./logs:/logs
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    volumes:
+      - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
+      - ./logs:/logs:ro
+      - crowdsec-db:/var/lib/crowdsec/data
+    environment:
+      COLLECTIONS: crowdsecurity/traefik crowdsecurity/base-http-scenarios
+      BOUNCER_KEY_DASH: changeme
+  app:
+    image: traefik/whoami:latest
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${routerName}.rule=Host(\`${input.hostname}\`)
+      - traefik.http.routers.${routerName}.entrypoints=web
+      - traefik.http.routers.${routerName}.middlewares=crowdsec-${routerName}
+      - crowdsec.enable=true
+      - crowdsec.labels.type=traefik
+volumes:
+  crowdsec-db:
+`
+	};
 }
 
 /* ---------------------------------- Nginx ---------------------------------- */

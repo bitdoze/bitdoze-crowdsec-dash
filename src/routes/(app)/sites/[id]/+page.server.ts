@@ -10,8 +10,9 @@ import { probeSite } from '#lib/server/protect/detect.ts';
 import { listArtifacts, markArtifact, regeneratePlan } from '#lib/server/protect/plan.ts';
 import { CHECKS, listChecks, markTestWindow, runSiteChecks } from '#lib/server/protect/checks.ts';
 import { TEST_PATH } from '#lib/server/protect/templates.ts';
-import { agentHello } from '#lib/server/agent/client.ts';
+import { agentHello, callAgent } from '#lib/server/agent/client.ts';
 import { enqueue } from '#lib/server/jobs/queue.ts';
+import { discoverTraefik, matchSite, parseDockerPs } from '#lib/server/protect/traefik.ts';
 
 const PROXIES = ['caddy', 'traefik', 'nginx', 'other', 'unknown'] as const;
 const RUNTIMES = ['native', 'docker', 'unknown'] as const;
@@ -31,17 +32,23 @@ export const load: PageServerLoad = async (event) => {
 	]);
 	// Managed apply is offered only for complete-file artifacts that declare
 	// a `# /path` target line — fragments (Caddyfile snippets, compose
-	// blocks) stay guided because merging is a per-host decision.
-	const MANAGED_KINDS = new Set(['acquisition']);
+	// blocks) stay guided because merging is a per-host decision. The
+	// middleware file additionally needs the cscli bridge to issue a key.
+	const MANAGED: Record<string, boolean> = {
+		acquisition: !!hello?.caps.files,
+		middleware: !!hello?.caps.files && !!hello?.caps.cscli
+	};
 	return {
 		site: s,
 		detection: s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : null,
 		artifacts: artifacts.map((a) => ({
 			...a,
 			target: a.content.match(/^# (\/\S+)$/m)?.[1] ?? null,
-			managed: !!hello?.caps.files && MANAGED_KINDS.has(a.kind)
+			managed: !!MANAGED[a.kind]
 		})),
 		agent: hello,
+		dockerDiscovery: ((s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : null)
+			?.docker ?? null) as Record<string, unknown> | null,
 		checkDefs: CHECKS,
 		checks: checks.map((c) => ({ ...c, evidence: c.evidence ? JSON.parse(c.evidence) : null })),
 		testPath: TEST_PATH,
@@ -204,12 +211,20 @@ export const actions: Actions = {
 		const artifactId = text(formData, 'artifactId');
 		const [a] = (await listArtifacts(db, s.id)).filter((x) => x.id === artifactId);
 		const target = a?.content.match(/^# (\/\S+)$/m)?.[1];
-		if (!a || a.kind !== 'acquisition' || !target)
+		if (!a || !['acquisition', 'middleware'].includes(a.kind) || !target)
 			return { notice: 'Only complete-file artifacts with a declared target can be applied.' };
+		// The middleware file carries a <bouncer-key> placeholder — the job
+		// issues a real key via cscli and substitutes it at write time.
+		const bouncerName =
+			a.kind === 'middleware'
+				? `dash-${s.hostname.replace(/[^a-z0-9]/g, '-').slice(0, 40)}-traefik`
+				: undefined;
+		if (bouncerName && !hello.caps.cscli)
+			return { notice: 'The middleware artifact needs the agent cscli bridge to issue a key.' };
 		const { created, job: j } = await enqueue(db, {
 			kind: 'config.apply',
 			// artifactId lets the job mark the artifact applied only on success.
-			params: { path: target, content: a.content, artifactId: a.id },
+			params: { path: target, content: a.content, artifactId: a.id, bouncerName },
 			idempotencyKey: `apply:${a.id}:${a.contentHash}`,
 			lockKey: `file:${target}`,
 			siteId: s.id,
@@ -225,5 +240,95 @@ export const actions: Actions = {
 				? `Queued managed apply to ${target} — backup + write via the agent.`
 				: 'That artifact version is already applied or queued.'
 		};
+	},
+
+	/**
+	 * Tier D: read the docker inventory through the agent and store the
+	 * Traefik topology on this site (routers, published ports, plugin state).
+	 */
+	dockerDiscover: async (event) => {
+		const user = requirePermission(event, 'operate');
+		const s = await loadSite(event.params.id);
+		const hello = await agentHello(true);
+		if (!hello?.caps.docker)
+			return {
+				notice: 'Agent docker ops are not enabled — set AGENT_DOCKER=1 (or docker cscli mode).'
+			};
+		const r = await callAgent<{ output?: string }>('docker.ps', {});
+		if (!r.ok) return { notice: `docker.ps failed: ${r.error.message}` };
+		const d = discoverTraefik(parseDockerPs(r.result.output ?? ''));
+		const match = matchSite(d, s.hostname);
+		const formData = await event.request.formData();
+		const dynamicDir = text(formData, 'dynamicDir');
+		const prior = s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : {};
+		await db
+			.update(site)
+			.set({
+				detection: JSON.stringify({
+					...prior,
+					docker: {
+						...d,
+						dynamicDir: /^\/\S{1,200}$/.test(dynamicDir)
+							? dynamicDir
+							: ((prior.docker as Record<string, unknown> | undefined)?.dynamicDir ??
+								'/etc/traefik/dynamic')
+					}
+				})
+			})
+			.where(eq(site.id, s.id));
+		await recordAudit({
+			event,
+			action: 'site.discovered',
+			detail: {
+				hostname: s.hostname,
+				via: 'docker',
+				traefik: d.traefik?.container ?? null,
+				apps: d.apps.length
+			}
+		});
+		void user;
+		return {
+			notice: match
+				? `Found ${match.container} routing ${s.hostname} via router "${match.router}".`
+				: `Scanned ${d.apps.length} routed container(s) — none advertises ${s.hostname}.`
+		};
+	},
+
+	/**
+	 * Adopt the discovered topology: this site is routed by Traefik on Docker.
+	 * Sets proxy/runtime and regenerates artifacts (with the stored dynamic dir).
+	 */
+	adoptTraefik: async (event) => {
+		requirePermission(event, 'operate');
+		const s = await loadSite(event.params.id);
+		const prior = s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : {};
+		const docker = prior.docker as Record<string, unknown> | undefined;
+		if (!docker?.traefik) return { notice: 'Run Docker discovery first — no Traefik seen.' };
+		const formData = await event.request.formData();
+		const dynamicDir = text(formData, 'dynamicDir');
+		await db
+			.update(site)
+			.set({
+				proxy: 'traefik',
+				runtime: 'docker',
+				detection: JSON.stringify({
+					...prior,
+					docker: {
+						...docker,
+						dynamicDir: /^\/\S{1,200}$/.test(dynamicDir)
+							? dynamicDir
+							: (docker.dynamicDir ?? '/etc/traefik/dynamic'),
+						adoptedAt: new Date().toISOString()
+					}
+				})
+			})
+			.where(eq(site.id, s.id));
+		await regeneratePlan(db, s.id);
+		await recordAudit({
+			event,
+			action: 'site.configured',
+			detail: { hostname: s.hostname, proxy: 'traefik', runtime: 'docker', via: 'adopt' }
+		});
+		return { notice: 'Adopted Traefik/Docker topology — artifacts regenerated.' };
 	}
 };

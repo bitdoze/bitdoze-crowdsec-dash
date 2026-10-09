@@ -24,8 +24,10 @@ function call(
 ): Promise<{
 	ok: boolean;
 	result?: {
-		caps?: { cscli: boolean; files: boolean; services: string[] };
+		caps?: { cscli: boolean; docker: boolean; files: boolean; services: string[] };
 		backup?: string | null;
+		key?: string;
+		output?: string;
 		[key: string]: unknown;
 	};
 	error?: { code: string; message: string };
@@ -67,31 +69,53 @@ const calls = () =>
 beforeAll(async () => {
 	mkdirSync(FILE_ROOT, { recursive: true });
 	mkdirSync(BIN_DIR, { recursive: true });
-	// Stub cscli — logs argv, answers `-o json` list ops with canned JSON.
+	// Stub cscli — logs argv, answers `-o json` list ops with canned JSON,
+	// `bouncers add` with a deterministic key.
 	writeFileSync(
 		join(BIN_DIR, 'cscli'),
 		[
 			'#!/bin/sh',
 			`echo "cscli $*" >> ${CALLS_LOG}`,
-			'for a in "$@"; do if [ "$a" = "-o" ]; then echo \'[{"stub":true}]\'; exit 0; fi; done',
+			'case "$1 $2" in',
+			'  "bouncers add") echo "TEST-KEY-9f8e7d6c5b";;',
+			'  "bouncers delete") ;;',
+			'  *) for a in "$@"; do if [ "$a" = "-o" ]; then echo \'[{"stub":true}]\'; exit 0; fi; done;;',
+			'esac',
 			'exit 0'
 		].join('\n')
 	);
 	writeFileSync(
 		join(BIN_DIR, 'docker'),
-		['#!/bin/sh', `echo "docker $*" >> ${CALLS_LOG}`, 'exit 0'].join('\n')
+		[
+			'#!/bin/sh',
+			`echo "docker $*" >> ${CALLS_LOG}`,
+			'case "$1" in',
+			'  "ps") cat "${DOCKER_PS_FIXTURE:-/dev/null}";;',
+			'  "inspect") echo \'[{"Id":"stub"}]\';;',
+			'esac',
+			'exit 0'
+		].join('\n')
 	);
 	chmodSync(join(BIN_DIR, 'cscli'), 0o755);
 	chmodSync(join(BIN_DIR, 'docker'), 0o755);
 
+	writeFileSync(
+		join(AGENT_DIR, 'ps.jsonl'),
+		[
+			'{"Command":"traefik --providers.docker=true","Names":"traefik","Image":"traefik:v3.4","Labels":"","Networks":"proxy","Ports":"0.0.0.0:443->443/tcp","State":"running"}',
+			'{"Command":"whoami","Names":"blog","Image":"traefik/whoami","Labels":"traefik.enable=true,traefik.http.routers.blog.rule=Host(`blog.test`)","Networks":"proxy","Ports":"","State":"running"}'
+		].join('\n')
+	);
 	agent = spawn(process.execPath, ['server/agent.js'], {
 		env: {
 			...process.env,
 			AGENT_SOCKET: AGENT_SOCKET!,
 			AGENT_TOKEN: AGENT_TOKEN!,
 			AGENT_CSCLI: 'local',
+			AGENT_DOCKER: '1',
 			AGENT_FILE_ROOTS: FILE_ROOT,
 			AGENT_SERVICES: 'docker:crowdsec',
+			DOCKER_PS_FIXTURE: join(AGENT_DIR, 'ps.jsonl'),
 			PATH: `${BIN_DIR}:${process.env.PATH}`
 		},
 		stdio: 'ignore'
@@ -113,6 +137,7 @@ describe('protocol + auth', () => {
 		const r = await call('hello');
 		expect(r.ok).toBe(true);
 		expect(r.result.caps.cscli).toBe(true);
+		expect(r.result.caps.docker).toBe(true);
 		expect(r.result.caps.files).toBe(true);
 		expect(r.result.caps.services).toEqual(['docker:crowdsec']);
 	});
@@ -162,6 +187,34 @@ describe('cscli ops', () => {
 	it('simulation.set toggles with an optional scope', async () => {
 		expect((await call('simulation.set', { enabled: true })).ok).toBe(true);
 		expect(calls()).toContain('cscli simulation enable');
+	});
+
+	it('bouncers.add returns the issued key (callers keep it out of logs)', async () => {
+		const r = await call('bouncers.add', { name: 'dash-blog-traefik' });
+		expect(r.ok).toBe(true);
+		expect(r.result.name).toBe('dash-blog-traefik');
+		expect(r.result.key).toBe('TEST-KEY-9f8e7d6c5b');
+		expect(calls()).toContain('cscli bouncers add dash-blog-traefik -o raw');
+	});
+
+	it('bouncers.add rejects invalid names', async () => {
+		expect((await call('bouncers.add', { name: 'x; rm -rf /' })).ok).toBe(false);
+	});
+});
+
+describe('docker read ops', () => {
+	it('docker.ps returns the fixture JSONL', async () => {
+		const r = await call('docker.ps');
+		expect(r.ok).toBe(true);
+		expect(r.result.output).toContain('traefik/whoami');
+		expect(calls().some((c) => c.startsWith('docker ps'))).toBe(true);
+	});
+
+	it('docker.inspect validates the container name', async () => {
+		expect((await call('docker.inspect', { name: 'blog' })).ok).toBe(true);
+		const bad = await call('docker.inspect', { name: 'x; rm -rf /' });
+		expect(bad.ok).toBe(false);
+		expect(bad.error.code).toBe('invalid');
 	});
 });
 

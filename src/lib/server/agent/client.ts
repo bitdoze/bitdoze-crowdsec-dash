@@ -12,6 +12,7 @@ export type AgentCaps = {
 	caps: {
 		cscli: boolean;
 		cscliMode: string | null;
+		docker: boolean;
 		files: boolean;
 		roots: string[];
 		services: string[];

@@ -1,4 +1,12 @@
 #!/bin/sh
-# Stub docker for e2e — logs argv, always succeeds.
+# Stub docker for e2e — logs argv; `ps` emits a fixture JSONL when provided.
 echo "docker $*" >> "${AGENT_CALLS_LOG:-/dev/null}"
+case "$*" in
+	"ps -a --no-trunc --format {{json .}}")
+		cat "${DOCKER_PS_FIXTURE:-/dev/null}"
+		;;
+	"inspect --type container "*)
+		echo '[{"Id":"stub","State":{"Status":"running"}}]'
+		;;
+esac
 exit 0

@@ -120,6 +120,101 @@
 			{/if}
 		</Module>
 
+		<Module title="Docker topology">
+			{#if data.agent?.caps.docker}
+				{#if data.dockerDiscovery}
+					{@const d = data.dockerDiscovery as {
+						at: string;
+						dynamicDir?: string;
+						traefik?: { container: string; image: string; bouncerPlugin: boolean } | null;
+						crowdsec?: { container: string } | null;
+						apps?: Array<{
+							container: string;
+							router: string;
+							hostnames: string[];
+							middlewares: string[];
+							publishedPorts: string[];
+						}>;
+					}}
+					<dl class="space-y-1.5 text-sm">
+						<div class="flex justify-between gap-3">
+							<dt class="text-ink-3">Traefik</dt>
+							<dd class="font-mono text-ink">
+								{d.traefik ? `${d.traefik.container} · ${d.traefik.image}` : 'not found'}
+								{#if d.traefik}
+									<span class="text-ink-3">
+										· bouncer plugin {d.traefik.bouncerPlugin ? 'loaded' : 'not seen'}
+									</span>
+								{/if}
+							</dd>
+						</div>
+						<div class="flex justify-between gap-3">
+							<dt class="text-ink-3">CrowdSec</dt>
+							<dd class="font-mono text-ink">{d.crowdsec?.container ?? 'not found'}</dd>
+						</div>
+						<div class="flex justify-between gap-3">
+							<dt class="text-ink-3">This site</dt>
+							<dd class="text-right font-mono text-ink">
+								{#each (d.apps ?? []).filter( (a) => a.hostnames.includes(data.site.hostname) ) as app (app.router)}
+									{app.container} · router {app.router}
+									{#if app.middlewares.length}
+										· mw {app.middlewares.join(',')}
+									{/if}
+									{#if app.publishedPorts.length}
+										<span class="text-failed"> · bypass: {app.publishedPorts.join(', ')}</span>
+									{/if}
+								{:else}
+									<span class="text-ink-3">no router advertises {data.site.hostname}</span>
+								{/each}
+							</dd>
+						</div>
+						{#each (d.apps ?? []).filter((a) => !a.hostnames.includes(data.site.hostname) && a.publishedPorts.length) as app (app.router)}
+							<div class="flex justify-between gap-3">
+								<dt class="text-ink-3">{app.hostnames.join(', ') || app.container}</dt>
+								<dd class="text-right font-mono text-failed">
+									publishes {app.publishedPorts.join(', ')} — bypasses Traefik
+								</dd>
+							</div>
+						{/each}
+					</dl>
+					<p class="mt-2 text-[11px] text-ink-3">discovered {fmt(new Date(d.at))}</p>
+				{:else}
+					<p class="text-sm text-ink-3">
+						No docker inventory captured yet — discovery reads <code>docker ps</code> through the agent
+						and matches this site's hostname against Traefik router labels.
+					</p>
+				{/if}
+				{#if data.canOperate}
+					<form method="post" action="?/dockerDiscover" class="mt-3 flex flex-wrap items-end gap-3">
+						<Field
+							label="Traefik dynamic dir"
+							name="dynamicDir"
+							value={(data.dockerDiscovery as { dynamicDir?: string } | null)?.dynamicDir ??
+								'/etc/traefik/dynamic'}
+							class="w-64"
+						/>
+						<Button variant="secondary" size="sm" type="submit">Discover via agent</Button>
+					</form>
+					{#if data.dockerDiscovery && data.site.proxy !== 'traefik'}
+						<form method="post" action="?/adoptTraefik" class="mt-2">
+							<input
+								type="hidden"
+								name="dynamicDir"
+								value={(data.dockerDiscovery as { dynamicDir?: string }).dynamicDir ??
+									'/etc/traefik/dynamic'}
+							/>
+							<Button variant="secondary" size="sm" type="submit">Adopt Traefik topology</Button>
+						</form>
+					{/if}
+				{/if}
+			{:else}
+				<p class="text-sm text-ink-3">
+					Docker discovery needs the host agent with <code>AGENT_DOCKER=1</code> (or a docker-mode cscli
+					bridge). It maps Traefik routers to containers and flags direct-port bypasses.
+				</p>
+			{/if}
+		</Module>
+
 		<Module title="Verification checks">
 			<ul class="space-y-3">
 				{#each data.checkDefs as def (def.id)}

@@ -16,6 +16,8 @@
  *   AGENT_FILE_ROOTS  colon-separated writable roots (unset = file ops denied)
  *   AGENT_BACKUP_DIR  where file.backup lands    (default <socket dir>/backups)
  *   AGENT_SERVICES    comma-separated 'systemd:unit' / 'docker:ctr' reload targets
+ *   AGENT_DOCKER      '1' enables read-only docker ps/inspect ops
+ *                     (default: on when AGENT_CSCLI is docker:<container>)
  */
 import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
@@ -49,8 +51,11 @@ const SERVICES = new Set(
 const MAX_OUT = 512 * 1024;
 const MAX_FRAME = 4 * 1024 * 1024;
 const EXEC_TIMEOUT = 30_000;
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const PROTOCOL = 1;
+// Read-only docker discovery is opt-in — implicit only when the cscli
+// bridge already execs into a container (socket is clearly present).
+const DOCKER = process.env.AGENT_DOCKER === '1' || CSCLI_MODE.startsWith('docker:');
 
 if (!TOKEN) {
 	console.error('AGENT_TOKEN is required — refusing to listen unauthenticated');
@@ -131,6 +136,7 @@ function cscli(args, opts) {
 
 const HUB_ITEM = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
 const NAME = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+const CONTAINER = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 const IP_OR_CIDR =
 	/^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$|^[0-9a-fA-F:]+(\/\d{1,3})?$|^(\d{1,3}\.){3}\d{1,3}$/;
 const SIM_SCOPE = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
@@ -173,6 +179,7 @@ const OPS = {
 			caps: {
 				cscli: !!cscliBase(),
 				cscliMode: CSCLI_MODE || null,
+				docker: DOCKER,
 				files: FILE_ROOTS.length > 0,
 				roots: FILE_ROOTS.map((r) => r.slice(0, -1)),
 				services: [...SERVICES]
@@ -199,6 +206,22 @@ const OPS = {
 			timeout: 60_000
 		}).then((r) =>
 			r.ok ? { ok: true, result: { output: r.result.output.slice(0, 64 * 1024) } } : r
+		);
+	},
+
+	// ---- read-only docker discovery (AGENT_DOCKER) ---------------------------
+	'docker.ps': () => {
+		if (!DOCKER) return err('unavailable', 'docker ops not enabled (AGENT_DOCKER)');
+		// One JSON object per line — parsed dashboard-side.
+		return run('docker', ['ps', '-a', '--no-trunc', '--format', '{{json .}}']).then((r) =>
+			r.ok ? { ok: true, result: { output: r.result.output.slice(0, 512 * 1024) } } : r
+		);
+	},
+	'docker.inspect': (p) => {
+		if (!DOCKER) return err('unavailable', 'docker ops not enabled (AGENT_DOCKER)');
+		if (!p || !CONTAINER.test(p.name || '')) return err('invalid', 'docker.inspect needs {name}');
+		return run('docker', ['inspect', '--type', 'container', p.name]).then((r) =>
+			r.ok ? { ok: true, result: { output: r.result.output.slice(0, 512 * 1024) } } : r
 		);
 	},
 
@@ -239,6 +262,26 @@ const OPS = {
 			args.push(p.scope);
 		}
 		return serial(() => cscli(args));
+	},
+
+	/**
+	 * Issue a bouncer API key. If the name exists it is deleted and re-issued —
+	 * a key is unrecoverable after creation, so recreation is the only
+	 * idempotent answer. The result carries the key: callers must treat it as
+	 * a secret and never write it into logs or job detail.
+	 */
+	'bouncers.add': (p) => {
+		if (!p || !NAME.test(p.name || '')) return err('invalid', 'need {name}');
+		return serial(async () => {
+			const add = await cscli(['bouncers', 'add', p.name, '-o', 'raw']);
+			if (add.ok) return { ok: true, result: { name: p.name, key: add.result.output.trim() } };
+			if (!/exist/i.test(add.error.message)) return add;
+			const del = await cscli(['bouncers', 'delete', p.name]);
+			if (!del.ok) return del;
+			const again = await cscli(['bouncers', 'add', p.name, '-o', 'raw']);
+			if (!again.ok) return again;
+			return { ok: true, result: { name: p.name, key: again.result.output.trim() } };
+		});
 	},
 
 	// ---- scoped file ops -----------------------------------------------------

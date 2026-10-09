@@ -12,13 +12,23 @@ import { artifactHash, generatePlan, type PlanInput } from './templates.ts';
 type Database = typeof db;
 
 export function planInputFor(s: typeof site.$inferSelect, lapiUrl: string): PlanInput {
+	// Site extras (docker discovery may store a host-side Traefik dynamic dir).
+	let dynamicDir: string | undefined;
+	try {
+		const det = s.detection ? (JSON.parse(s.detection) as Record<string, unknown>) : {};
+		const v = (det.docker as Record<string, unknown> | undefined)?.dynamicDir;
+		if (typeof v === 'string' && /^\/\S{1,200}$/.test(v)) dynamicDir = v;
+	} catch {
+		/* malformed detection JSON — ignore */
+	}
 	return {
 		hostname: s.hostname,
 		proxy: s.proxy,
 		runtime: s.runtime,
 		cloudflare: s.cloudflare,
 		lapiUrl,
-		logDir: '/var/log/proxy' // documented default; admins adjust paths
+		logDir: '/var/log/proxy', // documented default; admins adjust paths
+		dynamicDir
 	};
 }
 

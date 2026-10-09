@@ -233,10 +233,12 @@ export async function runClaimed(database: Database, j: JobRow): Promise<void> {
 
 	const prior = await database.select().from(jobStep).where(eq(jobStep.jobId, j.id));
 	const done = new Set(prior.filter((s) => s.state === 'succeeded').map((s) => s.idx));
-	const ctx: JobContext = { database, job: j };
+	const ctx: JobContext = { database, job: j, secrets: {} };
 
 	for (const [i, step] of steps.entries()) {
-		if (done.has(i)) continue;
+		// Secret-producing steps re-run even when already succeeded — their
+		// result lives only in memory and is lost on worker restart.
+		if (done.has(i) && !step.ephemeral) continue;
 		if (await cancelRequested(database, j.id)) return finish('cancelled', 'Cancelled by user.');
 		await writeStep(database, j.id, i, step.name, 'running');
 		await heartbeat(database, j.id);

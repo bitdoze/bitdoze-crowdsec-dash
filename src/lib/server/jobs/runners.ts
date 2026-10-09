@@ -11,8 +11,26 @@ import { callAgent } from '#lib/server/agent/client.ts';
 type Database = typeof db;
 type JobRow = typeof job.$inferSelect;
 
-export type JobContext = { database: Database; job: JobRow };
-export type JobStep = { name: string; run: (ctx: JobContext) => Promise<unknown> };
+export type JobContext = {
+	database: Database;
+	job: JobRow;
+	/**
+	 * Per-run secret stash (e.g. an issued bouncer key). In-memory only —
+	 * secrets must never be written to step detail or job results, so a
+	 * job resuming after a crash re-issues them instead of reading back.
+	 */
+	secrets: Record<string, string>;
+};
+export type JobStep = {
+	name: string;
+	run: (ctx: JobContext) => Promise<unknown>;
+	/**
+	 * Re-run even after success when the job resumes — needed for steps that
+	 * produce in-memory secrets (the stash is empty after a worker restart).
+	 * The op must be idempotent (bouncers.add re-issues safely).
+	 */
+	ephemeral?: boolean;
+};
 export type Runner = {
 	plan: (params: Record<string, unknown>) => JobStep[] | Promise<JobStep[]>;
 	rollback?: (params: Record<string, unknown>, ctx: JobContext) => JobStep[] | Promise<JobStep[]>;
@@ -117,9 +135,11 @@ export const RUNNERS: Record<string, Runner> = {
 	},
 
 	/**
-	 * Managed apply of a generated artifact: backup → write → optional
-	 * reload. On failure after the write, restores the recorded backup and
-	 * reloads again.
+	 * Managed apply of a generated artifact: [issue bouncer key] → backup →
+	 * write → optional reload. On failure after the write, restores the
+	 * recorded backup and reloads again. With `bouncerName`/`keyPlaceholder`,
+	 * the placeholder is substituted into content at write time — the key
+	 * lives only in ctx.secrets, never in stored detail.
 	 */
 	'config.apply': {
 		plan: (params) => {
@@ -130,10 +150,38 @@ export const RUNNERS: Record<string, Runner> = {
 			const reload = params.reloadTarget === undefined ? undefined : String(params.reloadTarget);
 			if (reload !== undefined && !TARGET.test(reload)) bad('invalid reload target');
 			const artifactId = params.artifactId === undefined ? undefined : String(params.artifactId);
-			const steps: JobStep[] = [
+			const bouncerName = params.bouncerName === undefined ? undefined : String(params.bouncerName);
+			if (bouncerName !== undefined && !NAME.test(bouncerName)) bad('invalid bouncer name');
+			const placeholder =
+				params.keyPlaceholder === undefined ? '<bouncer-key>' : String(params.keyPlaceholder);
+			const steps: JobStep[] = [];
+			if (bouncerName) {
+				steps.push({
+					name: `issue bouncer key ${bouncerName}`,
+					// Always re-run on resume — the key lives only in ctx.secrets.
+					ephemeral: true,
+					run: async (ctx) => {
+						const r = await call('bouncers.add', { name: bouncerName });
+						const key = (r as { key?: unknown }).key;
+						if (typeof key !== 'string' || key.length < 8) bad('bouncers.add returned no key');
+						ctx.secrets.bouncerKey = key;
+						return `issued key for ${bouncerName}`; // never the key itself
+					}
+				});
+			}
+			steps.push(
 				{ name: `backup ${path}`, run: () => call('file.backup', { path }) },
-				{ name: `write ${path}`, run: () => call('file.write', { path, content }) }
-			];
+				{
+					name: `write ${path}`,
+					run: (ctx) =>
+						call('file.write', {
+							path,
+							content: ctx.secrets.bouncerKey
+								? content.split(placeholder).join(ctx.secrets.bouncerKey)
+								: content
+						})
+				}
+			);
 			if (reload) {
 				steps.push({
 					name: `reload ${reload}`,
@@ -162,7 +210,7 @@ export const RUNNERS: Record<string, Runner> = {
 				.from(jobStep)
 				.where(eq(jobStep.jobId, ctx.job.id))
 				.orderBy(asc(jobStep.idx));
-			const backupDetail = steps.find((s) => s.idx === 0)?.detail;
+			const backupDetail = steps.find((s) => s.name.startsWith('backup '))?.detail;
 			let backup: string | null = null;
 			try {
 				backup = backupDetail ? (JSON.parse(backupDetail).backup ?? null) : null;

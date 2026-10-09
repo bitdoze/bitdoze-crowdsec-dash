@@ -86,9 +86,11 @@ export const configArtifact = sqliteTable(
 				'collections',
 				'real_ip',
 				'bouncer',
+				'middleware',
 				'appsec',
 				'remediation',
-				'compose'
+				'compose',
+				'demo'
 			]
 		}).notNull(),
 		title: text('title').notNull(),

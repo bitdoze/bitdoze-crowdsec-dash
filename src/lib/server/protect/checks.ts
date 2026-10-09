@@ -41,6 +41,12 @@ export const CHECKS = [
 		id: 'real_ip',
 		title: 'Real client IPs in logs',
 		detail: "Confirmed manually — compare a test request's logged IP to your real address."
+	},
+	{
+		id: 'bypass',
+		title: 'No direct-port bypass',
+		detail:
+			'Docker apps routed by Traefik must not also publish host ports — that skips the proxy, the bouncer, and the WAF entirely.'
 	}
 ] as const;
 
@@ -241,6 +247,63 @@ async function checkRealIp(database: Database, siteId: string): Promise<CheckRes
 	};
 }
 
+/**
+ * Docker sites only: inspect published ports via the agent. A routed app that
+ * also binds a host port bypasses Traefik — and everything attached to it.
+ */
+async function checkBypass(database: Database, siteId: string): Promise<CheckResult> {
+	const [s] = await database.select().from(site).where(eq(site.id, siteId)).limit(1);
+	if (!s || s.runtime !== 'docker') {
+		return { state: 'not_applicable', evidence: { message: 'Only applies to Docker runtimes.' } };
+	}
+	const { agentHello, callAgent } = await import('#lib/server/agent/client.ts');
+	const hello = await agentHello();
+	if (!hello?.caps.docker) {
+		return {
+			state: 'not_applicable',
+			evidence: {
+				message: 'Needs the host agent with docker read ops (AGENT_DOCKER=1 or docker cscli mode).'
+			}
+		};
+	}
+	const r = await callAgent<{ output?: string }>('docker.ps', {});
+	if (!r.ok) {
+		return {
+			state: 'stale',
+			evidence: { message: `docker.ps failed: ${r.error.message}` }
+		};
+	}
+	const { discoverTraefik, matchSite, parseDockerPs } =
+		await import('#lib/server/protect/traefik.ts');
+	const d = discoverTraefik(parseDockerPs(r.result.output ?? ''));
+	const app = matchSite(d, s.hostname);
+	if (!app) {
+		return {
+			state: 'stale',
+			evidence: {
+				message: `No Traefik router for ${s.hostname} in the docker inventory — run Docker discovery on this site first.`
+			}
+		};
+	}
+	if (app.publishedPorts.length) {
+		return {
+			state: 'failed',
+			evidence: {
+				message: `${app.container} publishes ${app.publishedPorts.join(', ')} — direct hits skip Traefik, the bouncer, and the WAF. Remove the ports: mapping or firewall it.`,
+				container: app.container,
+				ports: app.publishedPorts
+			}
+		};
+	}
+	return {
+		state: 'verified',
+		evidence: {
+			message: `${app.container} (router ${app.router}) is reachable only through Traefik.`,
+			container: app.container
+		}
+	};
+}
+
 const RUNNERS: Record<
 	CheckId,
 	(database: Database, siteId: string, markedAt: Date | null) => Promise<CheckResult>
@@ -249,7 +312,8 @@ const RUNNERS: Record<
 	test_alert: (database, siteId, markedAt) => checkTestAlert(database, siteId, markedAt),
 	decision_feed: (database) => checkDecisionFeed(database),
 	waf: (database) => checkWaf(database),
-	real_ip: (database, siteId) => checkRealIp(database, siteId)
+	real_ip: (database, siteId) => checkRealIp(database, siteId),
+	bypass: (database, siteId) => checkBypass(database, siteId)
 };
 
 /** Run one check for a site and persist the outcome. */
@@ -292,7 +356,7 @@ export async function runCheck(
 		const kinds: Record<string, Array<(typeof configArtifact.$inferSelect)['kind']>> = {
 			acquisition: ['access_log', 'acquisition', 'collections'],
 			test_alert: ['access_log', 'acquisition', 'collections'],
-			decision_feed: ['bouncer'],
+			decision_feed: ['bouncer', 'middleware'],
 			waf: ['appsec'],
 			real_ip: ['real_ip']
 		};
@@ -327,7 +391,7 @@ export async function markTestWindow(database: Database, siteId: string): Promis
 
 /** Re-run all automated checks for a site (worker + manual run share this). */
 export async function runSiteChecks(database: Database, siteId: string): Promise<void> {
-	for (const checkId of ['acquisition', 'test_alert', 'decision_feed', 'waf'] as const) {
+	for (const checkId of ['acquisition', 'test_alert', 'decision_feed', 'waf', 'bypass'] as const) {
 		try {
 			await runCheck(database, siteId, checkId);
 		} catch {

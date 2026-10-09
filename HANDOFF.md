@@ -126,6 +126,20 @@ Verified: `check` 0/0, lint clean, `npm test` 138, `npm run build`, full `npx pl
 
 **Not yet (phase 7+):** pre-apply diff preview, `crowdsec -t` native validation step, conflict detection for hand-edited files, `explain`/`setup.detect` UI surfaces, formal agent enrollment (token is shared out-of-band today).
 
+## Phase 7 (Traefik + Docker managed integration) — done, on `main`
+
+- **Agent v0.5.0:** `docker.ps` (read-only `docker ps -a --no-trunc --format '{{json .}}'`), `docker.inspect` (validated container names, `--type container`), `bouncers.add` (`cscli bouncers add <name> -o raw`; deletes + re-issues if the name exists; the raw key is returned only in the immediate op result — never logged or persisted). Docker capability is opt-in via `AGENT_DOCKER=1` or implicit when `AGENT_CSCLI=docker:<container>`; `hello` reports `caps.docker`.
+- **Discovery** `src/lib/server/protect/traefik.ts`: parses the `docker.ps` JSONL into a `DockerTopology` — Traefik container (+ whether the `crowdsec-bouncer` plugin appears in its command/labels), CrowdSec container, per-app router labels (`traefik.http.routers.*.rule` Host match + `middlewares` labels), published ports, and site-hostname matching. Containers that are neither Traefik nor CrowdSec count as opted-in apps only when they carry Traefik router labels.
+- **Site flow:** "Discover via agent" runs `docker.ps`, stores the topology + `dynamicDir` (default `/etc/traefik/dynamic`) in `site.detection`, audits it. "Adopt Traefik topology" sets `proxy=traefik`/`runtime=docker` and regenerates artifacts.
+- **Template split:** the old monolithic Traefik bouncer artifact is now a static-fragment artifact (guided — editing `traefik.yaml` needs a restart) plus a `middleware` artifact: a complete file-provider document at `<dynamicDir>/crowdsec-<host>.yaml` containing the CrowdSec `http.middlewares` block (`<bouncer-key>` placeholder, LAPI host, trusted-proxy CIDRs) and guidance for attaching it via labels or a file-provider router block — Traefik `watch: true` picks it up with no restart. A `demo` artifact emits a standalone compose stack (Traefik + CrowdSec + whoami, guided-only comments).
+- **Secret plumbing:** `JobContext.secrets` is in-memory only. `config.apply` with `bouncerName` runs an ephemeral `bouncers.add` step (key → `ctx.secrets.bouncerKey`), substitutes `<bouncer-key>` during the write step, and step detail keeps the placeholder. Ephemeral steps always re-run on resume — a crashed worker re-issues the key rather than reviving it. Rollback locates the backup step by name (`backup …`), not index.
+- **Bypass check:** `protect/checks.ts` `bypass` — N/C for non-Docker sites or no docker capability, `stale` when `docker.ps` fails or the site's router isn't found, `failed` with container+port evidence when the routed app publishes host ports, `verified` when it doesn't. `runSiteChecks` runs it alongside acquisition/test_alert/decision_feed/waf; decision-feed verification promotes `middleware` artifacts.
+- **Tests:** `tests/traefik.test.ts` (8 cases — parse, plugin detect, router/middleware map, host match, bypass); agent suite gained docker + `bouncers.add` ops; jobs suite gained key-non-leak (step detail keeps `<bouncer-key>`) and crashed-resume key re-issue; `e2e/system.spec.ts` gained 6 cases driving stub `docker`/`cscli` fixtures (`e2e/mock-bin/`): discover → adopt → managed middleware apply with substituted key → bypass check failing on the whoami app publishing `:8080`.
+
+Verified: `check` 0/0, lint clean, `npm test` 154, `npm run build`, full `npx playwright test` 40 pass (+7 skipped), Docker topology module visually reviewed (light theme).
+
+**Not yet:** real-Docker-host validation (container recreation, missing networks, log rotation, router attach on a live stack, reload failure against a real service); `explain`-driven parser checks; the phase-7 acceptance gate (verified detection + shared bans + inline WAF on a real Traefik topology).
+
 ## Actions only the owner can take
 
 1. GitHub → Settings → Actions → General → enable **"Allow GitHub Actions to create and approve pull requests"**. Release-please fails without it (latest Release run: "GitHub Actions is not permitted to create or approve pull requests").
@@ -139,9 +153,9 @@ Verified: `check` 0/0, lint clean, `npm test` 138, `npm run build`, full `npx pl
 
 - All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 
-### 2. Phase 7 (v0.5.0): first managed integration — Traefik + Docker — spec checklist.
+### 2. Phase 7 real-host validation + Phase 8 (v0.6.0): managed Caddy and Nginx
 
-Discover/adopt a Traefik+Docker topology, run phase-5 artifacts through the job lifecycle, attach protection to routers, detect port bypasses, per-router log/parser/client-IP/bouncer/WAF checks on two sites. Needs the agent deployed on a real Docker host.
+Phase 7 code is on `main` with stub-driven e2e; the remaining items need a real Docker host (deploy the agent with `AGENT_DOCKER=1`, run the demo compose artifact, verify detection/bypass/recreation). Phase 8 reuses the same job lifecycle for Caddy + Nginx: managed bouncer config (complete-file artifacts already exist), `service.reload` targets, acquisition + real-IP chains, and per-site verification checks.
 
 Later phases (8–13) are fully described in the spec.
 
@@ -160,6 +174,9 @@ Later phases (8–13) are fully described in the spec.
 - **Ctrl+K tests:** press-and-retry until the palette appears — the keydown listener may not be hydrated yet right after `goto`.
 - **Kit 3 named actions:** a `default` action cannot coexist with named actions on the same page (POST throws `action_default_with_named`). `/login` uses `signIn`/`verify`/`verifyBackup`.
 - **Better Auth rate limit:** `auth.api.*` calls from form actions bypass the HTTP rate limiter — app-level throttling lives in `src/lib/server/throttle.ts`.
+- **Job secrets:** secret-producing steps (e.g. `bouncers.add`) must be marked `ephemeral` — they re-run even on resume, otherwise the placeholder reaches the write step literally. Keys live only in `ctx.secrets`, never in `job_step.detail`.
+- **Rollback lookup:** never assume the backup step is index 0 — optional key-issuance steps shift it. Find it by `step.name.startsWith('backup ')`.
+- **e2e docker fixture:** the agent's docker capability needs `AGENT_DOCKER=1` in the Playwright env _and_ the stub `docker` binary on PATH; `E2E_DOCKER_PS` points the stub at a JSONL fixture.
 - **Playwright `newContext` in the test runner** inherits `use` options, including `storageState` — pass `storageState: { cookies: [], origins: [] }` for a truly signed-out context (`freshContext` in `e2e/security.spec.ts`). `browser.newPage()` inherits too.
 - **Better Auth API calls from tests** need an explicit `Origin` header (`page.request.post` doesn't send one): `MISSING_OR_NULL_ORIGIN` otherwise.
 - **Playwright `reuseExistingServer`:** a killed run can leave its web server alive; the next run then reuses a stale build. Check the port before rerunning.

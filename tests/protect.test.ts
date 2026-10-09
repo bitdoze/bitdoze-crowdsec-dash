@@ -248,6 +248,7 @@ describe('protection checks', () => {
 		const rows = await db.select().from(protectionCheck).where(eq(protectionCheck.siteId, siteId));
 		expect(rows.map((r) => r.checkId).sort()).toEqual([
 			'acquisition',
+			'bypass',
 			'decision_feed',
 			'test_alert',
 			'waf'

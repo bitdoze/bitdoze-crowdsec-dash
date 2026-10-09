@@ -18,5 +18,9 @@ case "$*" in
 	"simulation status -o json")
 		echo '{"simulation_mode":false}'
 		;;
+	"bouncers add "*)
+		# Deterministic key so e2e can verify placeholder substitution.
+		echo "e2e-bouncer-key-$(echo "$3" | tr -cd 'a-z0-9-')"
+		;;
 esac
 exit 0
