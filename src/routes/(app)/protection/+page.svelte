@@ -21,6 +21,30 @@
 		stale: '~',
 		not_applicable: 'N/A'
 	} as const;
+
+	const stepStamp = {
+		done: 'verified',
+		current: 'stale',
+		todo: 'not_configured'
+	} as const;
+	const stepLabel = { done: 'done', current: 'current', todo: 'pending' } as const;
+
+	function stepHref(step: (typeof data.steps)[number]) {
+		switch (step.target) {
+			case 'users':
+				return resolve('/(app)/settings/users');
+			case 'crowdsec':
+				return resolve('/(app)/settings/crowdsec');
+			case 'sites':
+				return resolve('/(app)/sites');
+			case 'site':
+				return step.siteId ? resolve('/(app)/sites/[id]', { id: step.siteId }) : null;
+			case 'notifications':
+				return resolve('/(app)/settings/notifications');
+			default:
+				return null;
+		}
+	}
 </script>
 
 <svelte:head><title>Protection · CrowdSec Dash</title></svelte:head>
@@ -35,7 +59,46 @@
 
 	<SyncBanner connected={data.connected} freshness={data.freshness} />
 
-	<Module title="Checklist">
+	<Module title="Setup">
+		<p class="mb-3 text-xs text-ink-3">
+			{data.progress.done} of {data.progress.total} steps complete — resumable; every step stays revisitable
+			below and on the site checklists.
+		</p>
+		<ol class="space-y-2">
+			{#each data.steps as step, i (step.id)}
+				{@const href = stepHref(step)}
+				<li
+					class="flex items-start gap-3 rounded-sm border border-rule px-3 py-2.5 {step.state ===
+					'current'
+						? 'bg-paper-2'
+						: ''}"
+				>
+					<span class="mt-0.5 w-5 shrink-0 text-center font-mono text-xs text-ink-3 tabular-nums"
+						>{i + 1}</span
+					>
+					<div class="min-w-0 flex-1">
+						<div class="flex flex-wrap items-center gap-2">
+							{#if href}
+								<a {href} class="text-sm font-medium text-accent underline">{step.title}</a>
+							{:else}
+								<span class="text-sm font-medium">{step.title}</span>
+							{/if}
+							<Stamp state={stepStamp[step.state]} label={stepLabel[step.state]} />
+						</div>
+						<p class="mt-0.5 text-xs text-ink-3">{step.detail}</p>
+						{#if step.hint}
+							<code
+								class="bg-paper-2 mt-1.5 block w-fit rounded-sm border border-rule px-2 py-1 font-mono text-xs text-ink-2"
+								>{step.hint}</code
+							>
+						{/if}
+					</div>
+				</li>
+			{/each}
+		</ol>
+	</Module>
+
+	<Module title="Site checks">
 		{#if data.matrix.length === 0}
 			<p class="text-sm text-ink-3">
 				No sites yet — <a href={resolve('/(app)/sites')} class="text-accent underline">add one</a>

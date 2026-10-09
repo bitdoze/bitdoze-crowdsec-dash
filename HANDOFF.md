@@ -104,7 +104,13 @@ Verified: `npm run check` 0/0, `npm run lint` clean, `npm test` 102, `npm run bu
 
 Verified: `check` 0/0, lint clean, `npm test` 115 (incl. 13 new protect tests: artifact sets per proxy/runtime/CF, hash-stable regeneration, check states + promotion), full `npx playwright test` 34 pass (+7 skipped), screens visually reviewed.
 
-**Not yet:** the resumable first-run wizard (inventory + detail exist; the stepper does not), real-proxy end-to-end runs (fixture + reference host), the DOCKER-USER firewall-bouncer check (needs tier D agent).
+**Wizard** (spec 5.8): `/protection` leads with a resumable 7-step stepper — admin → connect → topology → sites → plan → verify → notifications. Every step's done/current state derives from live rows (`crowdsec_connection` + first sync success, `site.detection`/non-unknown proxy, site count, `config_artifact` presence, per-site all-checks verified/not_applicable, enabled channels), and each step deep-links to its surface (settings/users, settings/crowdsec, sites, site detail, settings/notifications). The connect step shows the `cscli machines add` hint until linked.
+
+**Multi-site e2e** (`e2e/sites.spec.ts` second test): nginx-on-Docker via manual answers + Caddy via probe, one injected alert per fqdn, a pushed manual ban asserted visible on the shared decision feed from both site checklists — the agent-free proxy for phase 4's "ban enforced on both sites" item.
+
+**Bug found by that test:** the mock's `nextDecisionId` restarted at 9100 while `.e2e-data` persists — a pushed decision claimed a stored upstream id, and `replaceDecisions`' `onConflict` only refreshed `until`/`expired`/`alertUpstreamId`, so `reconcile` never matched (request stuck `pushed`). Fixed both sides: mock ids are seeded per-process (`Date.now() % 900000`), and the decision upsert now refreshes `type`/`scope`/`value`/`scenario` too.
+
+**Not yet:** real-proxy end-to-end runs (fixture + reference host), the DOCKER-USER firewall-bouncer check (needs tier D agent).
 
 ## Actions only the owner can take
 
@@ -119,13 +125,9 @@ Verified: `check` 0/0, lint clean, `npm test` 115 (incl. 13 new protect tests: a
 
 - All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 
-### 2. Phase 5 remainder: first-run wizard stepper (5.8) + multi-site fixture validation.
+### 2. Phase 6 (v0.4.0): agent + configuration lifecycle — spec checklist.
 
-The inventory/detail/matrix screens exist; the wizard itself (stepper connecting connect → detect → plan → verify → notifications) and real-proxy fixture runs remain. This also closes phase 4's "ban enforced on both fixture sites" item.
-
-### 3. Phase 6 (v0.4.0): agent + configuration lifecycle — spec checklist.
-
-Agent enrollment, the tier-D `cscli` bridge, durable jobs, managed config apply/diff/rollback.
+Agent enrollment, the tier-D `cscli` bridge, durable jobs, managed config apply/diff/rollback. This unlocks the remaining phase-4/5 items that need host access: DOCKER-USER coverage check, real per-entry-point ban verification, CVE detection.
 
 Later phases (7–13) are fully described in the spec.
 

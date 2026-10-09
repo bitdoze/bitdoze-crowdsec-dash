@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { ensureConnected } from './helpers.ts';
 
 const MOCK = 'http://127.0.0.1:8090';
 
@@ -84,4 +85,92 @@ test('sites: add, detect topology, generate artifacts, verify checks', async ({ 
 	await expect(page.getByRole('heading', { name: 'Protection' })).toBeVisible();
 	await expect(page.getByRole('link', { name: host })).toBeVisible();
 	await expect(page.getByText('✓ verified').first()).toBeVisible();
+
+	// Wizard reflects progress: admin/connect/topology/sites/plan steps done.
+	await expect(page.getByRole('link', { name: 'Connect CrowdSec' })).toBeVisible();
+	const adminStep = page.getByRole('listitem').filter({ hasText: 'Create the administrator' });
+	await expect(adminStep.getByText('done', { exact: true })).toBeVisible();
+	const sitesStep = page.getByRole('listitem').filter({ hasText: 'Add sites' });
+	await expect(sitesStep.getByText('done', { exact: true })).toBeVisible();
+	const planStep = page.getByRole('listitem').filter({ hasText: 'Build the protection plan' });
+	await expect(planStep.getByText('done', { exact: true })).toBeVisible();
+});
+
+test('sites: two topologies share the decision feed a ban lands on', async ({ page }) => {
+	await ensureConnected(page);
+	const run = Date.now() % 100000;
+	const hostA = `msa-${run}.example.com`;
+	const hostB = `msb-${run}.example.com`;
+
+	// Site A — manual topology answers (nginx on Docker), no probe.
+	await page.goto('/sites');
+	await page.getByLabel('Hostname').fill(hostA);
+	await page.getByLabel('Proxy').selectOption('nginx');
+	await page.getByLabel('Runs').selectOption('docker');
+	await page.getByRole('button', { name: 'Add site' }).click();
+	await expect(page.getByRole('status').first()).toContainText('added');
+
+	// nginx-specific artifacts generated from the answers alone.
+	await page.getByRole('link', { name: hostA }).click();
+	await expect(page.getByText('host-prefixed log format', { exact: false })).toBeVisible();
+	await expect(page.getByText('cs-nginx-bouncer', { exact: false }).first()).toBeVisible();
+
+	// Site B — probe-driven topology (Caddy + Cloudflare via the mock).
+	await page.goto('/sites');
+	await page.getByLabel('Hostname').fill(hostB);
+	await page.getByRole('button', { name: 'Add site' }).click();
+	await page.getByRole('link', { name: hostB }).click();
+	await page.getByLabel('Probe URL (optional)').fill(`${MOCK}/_site`);
+	await page.getByRole('button', { name: 'Detect topology' }).click();
+	await expect(page.getByRole('status').first()).toContainText('proxy: caddy');
+
+	// Attribute an alert to each site so acquisition has evidence on both.
+	for (const fqdn of [hostA, hostB]) {
+		const res = await page.request.post(`${MOCK}/_inject`, {
+			data: { scenario: 'crowdsecurity/http-probing', fqdn }
+		});
+		expect(res.ok()).toBeTruthy();
+	}
+
+	// A manual ban lands on the shared decision feed both sites' bouncers
+	// consume — agent-free proxy for "enforced on both entry points".
+	const banIp = `203.0.113.${(run % 200) + 10}`;
+	await page.goto('/decisions');
+	await page.getByLabel('IP or CIDR').fill(banIp);
+	await page.getByLabel('Duration').fill('4h');
+	await page.getByLabel('Reason').fill('multi-site feed check');
+	await page.getByRole('button', { name: 'Add decision' }).click();
+	await expect(page.getByRole('status').filter({ hasText: 'Ban requested' })).toBeVisible();
+	await page.goto('/settings/crowdsec');
+	await page.getByRole('button', { name: 'Sync now' }).click();
+	await page.goto('/decisions');
+	await expect(page.getByRole('link', { name: banIp })).toBeVisible();
+
+	// decision_feed verifies on both sites once the worker has synced the ban.
+	for (const host of [hostA, hostB]) {
+		await page.goto('/sites');
+		await page.getByRole('link', { name: host }).click();
+		for (let i = 0; i < 10; i++) {
+			await page.getByRole('button', { name: 'Run checks' }).click();
+			const cell = page.getByText('Decision feed reachable').locator('..');
+			if (
+				await cell
+					.getByText('Verified')
+					.isVisible()
+					.catch(() => false)
+			)
+				break;
+			await page.waitForTimeout(1500);
+		}
+		await expect(
+			page.getByText('Decision feed reachable').locator('..').getByText('Verified')
+		).toBeVisible();
+	}
+
+	// The matrix lists both rows; the ban stays visible server-wide.
+	await page.goto('/protection');
+	await expect(page.getByRole('link', { name: hostA })).toBeVisible();
+	await expect(page.getByRole('link', { name: hostB })).toBeVisible();
+	await page.goto('/decisions');
+	await expect(page.getByRole('link', { name: banIp })).toBeVisible();
 });

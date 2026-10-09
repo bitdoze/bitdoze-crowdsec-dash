@@ -102,8 +102,11 @@ let down = false;
 
 // Manual decisions pushed via POST /v1/alerts — surfaced back through
 // GET /v1/alerts so the projection confirms them like a real LAPI.
-let nextAlertId = 100;
-let nextDecisionId = 9100;
+// Ids are seeded per-process because .e2e-data persists across runs — a
+// counter restart would collide with stored upstream ids.
+const seed = (Date.now() % 900000) * 10;
+let nextAlertId = 100 + seed;
+let nextDecisionId = 9100 + seed;
 const manualAlerts = [];
 const deletedDecisions = new Set();
 let lastHookBody = null;

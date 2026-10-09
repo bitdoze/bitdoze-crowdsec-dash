@@ -167,6 +167,13 @@ async function replaceDecisions(database: Db, a: LapiAlert) {
 			.onConflictDoUpdate({
 				target: decision.upstreamId,
 				set: {
+					// Refresh every mutable field — upstream ids are stable
+					// identities on a real LAPI, but fixtures/mocks can reuse
+					// them across restarts.
+					type: d.type ?? null,
+					scope: d.scope ?? null,
+					value: d.value ?? null,
+					scenario: d.scenario ?? a.scenario ?? null,
 					until: until ? until : undefined,
 					expired: until !== null && until.getTime() < Date.now(),
 					syncedAt: new Date(),
