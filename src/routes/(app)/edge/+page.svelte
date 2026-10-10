@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { PageProps } from './$types';
+	import { resolve } from '$app/paths';
 	import Module from '#lib/components/Module.svelte';
 	import Stamp from '#lib/components/Stamp.svelte';
 	import Button from '#lib/components/Button.svelte';
@@ -142,6 +143,13 @@
 											value={zone.hostnames.join(' ')}
 											class="min-w-40 flex-1 rounded-[3px] border border-line bg-sheet px-2 py-1 font-mono text-xs"
 										/>
+										<input
+											type="text"
+											name="paths"
+											placeholder="all paths — or /prefixes"
+											value={zone.paths.join(' ')}
+											class="w-36 rounded-[3px] border border-line bg-sheet px-2 py-1 font-mono text-xs"
+										/>
 										<select
 											name="action"
 											class="rounded-[3px] border border-line bg-sheet px-1.5 py-1 text-xs"
@@ -149,6 +157,9 @@
 											<option value="block" selected={zone.action === 'block'}>Block</option>
 											<option value="challenge" selected={zone.action === 'challenge'}>
 												Managed Challenge
+											</option>
+											<option value="log" selected={zone.action === 'log'}>
+												Observe (log only)
 											</option>
 										</select>
 										{#if data.canOperate}
@@ -160,10 +171,13 @@
 						</ul>
 						<p class="mt-2 text-xs text-ink-3">
 							One custom rule per zone (<code>ip.src in ${account.listName ?? 'list'}</code>),
-							narrowed to the listed hostnames when given. Free plans allow 5 rules per zone
+							narrowed to listed hostnames and/or path prefixes when given. Free plans allow 5 rules
+							per zone
 							{#if account.zones[0]?.rulesInUse != null}
 								— {account.zones[0].rulesInUse} in use on {account.zones[0].name}
 							{/if}. Captcha-type decisions get the list's action.
+							<strong>Observe (log only)</strong> records matches in the Security Events log without blocking
+							— use it to roll out safely before enforcing.
 						</p>
 					{/if}
 				</div>
@@ -214,6 +228,46 @@
 		</Module>
 	{/each}
 
+	<Module title="Worker bouncer (advanced)">
+		<p class="max-w-2xl text-sm text-ink-3">
+			The maintained <code>crowdsec-cloudflare-worker-bouncer</code> daemon enforces decisions inside
+			a Cloudflare Worker — it exists for paid Workers plans, Turnstile captcha at the edge, or lists
+			above the 10,000-item list limit.
+		</p>
+		<ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-ink-3">
+			<li>
+				Worker routes are created <strong>fail-closed</strong> — after the daemon binds them, switch each
+				route to fail-open in the Cloudflare dashboard or a Worker outage blocks the site.
+			</li>
+			<li>
+				The daemon removes its Workers and KV namespaces when it stops — edge protection disappears
+				with it. Monitor the daemon like a critical service.
+			</li>
+			<li>
+				Free-plan quotas (1,000 KV writes + 100,000 Worker requests/day) make it unreliable on busy
+				sites — that's why the IP-list mode above is the default.
+			</li>
+		</ul>
+		{#if data.canOperate}
+			{#each data.accounts as account (account.id)}
+				{#if account.cfAccountId}
+					<!-- eslint-disable svelte/no-navigation-without-resolve -->
+					<a
+						href={resolve('/(app)/edge/worker-bouncer.yaml') + `?account=${account.id}`}
+						class="mt-3 mr-2 inline-flex items-center gap-1.5 rounded-[3px] border border-line bg-sheet px-3 py-1.5 text-sm font-semibold text-ink hover:bg-panel"
+						>Download worker-bouncer.yaml for {account.name}</a
+					>
+					<!-- eslint-enable svelte/no-navigation-without-resolve -->
+				{/if}
+			{/each}
+			<p class="mt-2 text-xs text-ink-3">
+				Fill in <code>&lt;cf-token&gt;</code> and a bouncer key from
+				<code>cscli bouncers add crowdsec-dash-cloudflare</code>, then run the daemon on the
+				CrowdSec host.
+			</p>
+		{/if}
+	</Module>
+
 	<Module title="About edge enforcement">
 		<ul class="list-disc space-y-1 pl-5 text-sm text-ink-3">
 			<li>
@@ -230,8 +284,9 @@
 				decision changes.
 			</li>
 			<li>
-				The Worker bouncer mode (Turnstile captcha, &gt;10k lists) is for paid plans — see
-				<code>docs/</code> before enabling it; its daemon removes Workers when it stops.
+				The Worker bouncer mode (Turnstile captcha, &gt;10k lists) is for paid plans — the module
+				above generates its daemon config; its routes are fail-closed and its daemon removes Workers
+				when it stops.
 			</li>
 		</ul>
 	</Module>

@@ -1,0 +1,1 @@
+CREATE INDEX `decision_edge_idx` ON `decision` (`expired`,`origin`);

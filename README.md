@@ -58,6 +58,17 @@ docker compose logs -f dashboard   # setup token is logged here
 Published image tags: `edge` (main branch), `X.Y.Z` / `X.Y` / `latest`
 (releases), and `sha-<commit>`.
 
+## Documentation
+
+- [Deployment](docs/deployment.md) — topologies, env vars, agent, Cloudflare edge
+- [Upgrading](docs/upgrading.md) — upgrade, rollback, migration notes
+- [Recovery](docs/recovery.md) — failure modes, backup/restore
+- [Compatibility](docs/compatibility.md) — supported matrix, limits
+- [Acceptance matrix](docs/acceptance-matrix.md) — what is verified and how
+- [Benchmarks](docs/benchmarks.md) — methodology and measured numbers
+- [Proxy integrations](docs/proxies.md)
+- [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).

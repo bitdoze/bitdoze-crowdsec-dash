@@ -236,7 +236,10 @@ export const decision = sqliteTable(
 	},
 	(table) => [
 		index('decision_value_idx').on(table.value),
-		index('decision_until_idx').on(table.until)
+		index('decision_until_idx').on(table.until),
+		// Edge sync scans (expired=0 AND origin IN local-origins) — bench
+		// showed ~82ms/scan at 10k rows without it.
+		index('decision_edge_idx').on(table.expired, table.origin)
 	]
 );
 
@@ -555,7 +558,9 @@ export const cloudflareZone = sqliteTable(
 		selected: integer('selected', { mode: 'boolean' }).default(false).notNull(),
 		/** JSON array; empty = whole zone. */
 		hostnames: text('hostnames').notNull().default('[]'),
-		action: text('action', { enum: ['block', 'challenge'] })
+		/** JSON array of URI path prefixes ("/admin"); empty = all paths. */
+		paths: text('paths').notNull().default('[]'),
+		action: text('action', { enum: ['block', 'challenge', 'log'] })
 			.default('block')
 			.notNull(),
 		/** The managed rule's id inside the zone's custom-rules ruleset. */

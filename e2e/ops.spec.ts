@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createClient } from '@libsql/client';
-import { lanIp } from './helpers.ts';
+import { lanIp, e2eDb } from './helpers.ts';
 
 /**
  * Phase 11 e2e — notification rules (class/site filters, quiet hours,
@@ -12,7 +11,7 @@ import { lanIp } from './helpers.ts';
  */
 
 function purgeChannels() {
-	const c = createClient({ url: 'file:.e2e-data/app.db' });
+	const c = e2eDb();
 	return c
 		.execute('DELETE FROM notification_outbox')
 		.then(() => c.execute('DELETE FROM notification_channel'))

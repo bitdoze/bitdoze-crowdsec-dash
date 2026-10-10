@@ -88,29 +88,43 @@ export function diffItems(current: CfListItem[], wanted: EdgeItem[]): ListDiff {
 export const RULE_REF = 'crowdsec-dash-edge';
 
 /**
- * The per-zone WAF custom rule. `http.host in {...}` narrows the rule to
- * selected hostnames when only part of a zone is opted in; omitted hosts
- * mean the whole zone.
+ * The per-zone WAF custom rule. `http.host in {...}` narrows to selected
+ * hostnames (empty = whole zone); `paths` narrows further to URI prefixes
+ * via `starts_with` (empty = all paths).
  */
-export function ruleExpression(listName: string, hostnames: string[]): string {
-	const base = `(ip.src in $${listName})`;
-	if (hostnames.length === 0) return base;
-	const hosts = hostnames.map((h) => `"${h}"`).join(' ');
-	return `(ip.src in $${listName} and http.host in {${hosts}})`;
+export function ruleExpression(
+	listName: string,
+	hostnames: string[],
+	paths: string[] = []
+): string {
+	let expr = `ip.src in $${listName}`;
+	if (hostnames.length) {
+		expr += ` and http.host in {${hostnames.map((h) => `"${h}"`).join(' ')}}`;
+	}
+	if (paths.length) {
+		const p = paths.map((p) => `starts_with(http.request.uri.path, "${p}")`).join(' or ');
+		expr += ` and (${p})`;
+	}
+	return `(${expr})`;
 }
 
-export type EdgeRuleAction = 'block' | 'challenge';
+/** `log` is Cloudflare's observe mode — matches are recorded, not blocked. */
+export type EdgeRuleAction = 'block' | 'challenge' | 'log';
 
 export function edgeRule(
 	listName: string,
 	hostnames: string[],
-	action: EdgeRuleAction
+	action: EdgeRuleAction,
+	paths: string[] = []
 ): { ref: string; expression: string; action: string; description: string; enabled: boolean } {
+	const scope = [hostnames.length ? 'selected hosts' : '', paths.length ? 'selected paths' : '']
+		.filter(Boolean)
+		.join(' + ');
 	return {
 		ref: RULE_REF,
-		expression: ruleExpression(listName, hostnames),
-		action: action === 'challenge' ? 'challenge' : 'block',
-		description: `CrowdSec edge — decisions from ${listName}${hostnames.length ? ' (selected hosts)' : ''}. Managed by bitdoze-crowdsec-dash.`,
+		expression: ruleExpression(listName, hostnames, paths),
+		action,
+		description: `CrowdSec edge — decisions from ${listName}${scope ? ` (${scope})` : ''}. Managed by bitdoze-crowdsec-dash.`,
 		enabled: true
 	};
 }

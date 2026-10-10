@@ -183,6 +183,24 @@ export function parseHostnames(raw: string): string[] {
 }
 
 /**
+ * URI path prefixes for route narrowing. Only `/`-prefixed paths without
+ * quotes or backslashes survive — either could break out of the quoted
+ * string in the rendered CF expression.
+ */
+export function parsePaths(raw: string): string[] {
+	return [
+		...new Set(
+			raw
+				.split(/[\s,]+/)
+				.map((p) => p.trim())
+				.filter(
+					(p) => p.startsWith('/') && !p.includes('"') && !p.includes('\\') && p.length <= 128
+				)
+		)
+	].slice(0, 16);
+}
+
+/**
  * Ensure the account-level IP list exists: adopt a compatible existing
  * `crowdsec_dash_*` list or create one. Adopted lists are never deleted
  * on uninstall.
@@ -241,7 +259,8 @@ export async function applyZoneRule(zoneRowId: string): Promise<{ ruleId: string
 		const ruleset = await cf.getCustomRules(zone.zoneId);
 		const others = (ruleset?.rules ?? []).filter((r) => r.ref !== RULE_REF);
 		const hostnames = JSON.parse(zone.hostnames) as string[];
-		const mine = edgeRule(account.listName, hostnames, zone.action);
+		const paths = JSON.parse(zone.paths ?? '[]') as string[];
+		const mine = edgeRule(account.listName, hostnames, zone.action, paths);
 		const updated = await cf.putCustomRules(zone.zoneId, [...others, mine]);
 		const ruleId = updated.rules.find((r) => r.ref === RULE_REF)?.id ?? '';
 		await db
@@ -278,7 +297,12 @@ export async function removeZoneRule(zoneRowId: string): Promise<void> {
 /** Update zone selection; installing/removing the managed rule follows. */
 export async function setZoneSelection(
 	zoneRowId: string,
-	opts: { selected: boolean; hostnames?: string[]; action?: 'block' | 'challenge' }
+	opts: {
+		selected: boolean;
+		hostnames?: string[];
+		paths?: string[];
+		action?: 'block' | 'challenge' | 'log';
+	}
 ): Promise<void> {
 	const zone = await db.query.cloudflareZone.findFirst({
 		where: eq(cloudflareZone.id, zoneRowId)
@@ -289,6 +313,7 @@ export async function setZoneSelection(
 		.set({
 			selected: opts.selected,
 			...(opts.hostnames ? { hostnames: JSON.stringify(opts.hostnames) } : {}),
+			...(opts.paths ? { paths: JSON.stringify(opts.paths) } : {}),
 			...(opts.action ? { action: opts.action } : {})
 		})
 		.where(eq(cloudflareZone.id, zoneRowId));

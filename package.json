@@ -26,7 +26,9 @@
 		"auth:schema": "auth generate --config src/lib/server/auth.ts --output src/lib/server/db/auth.schema.ts --yes",
 		"recover": "node scripts/recover.mjs",
 		"backup": "node scripts/backup.mjs",
-		"restore": "node scripts/restore.mjs"
+		"restore": "node scripts/restore.mjs",
+		"drills": "node scripts/drills.mjs",
+		"bench": "node scripts/bench.mjs"
 	},
 	"overrides": {
 		"better-auth": {

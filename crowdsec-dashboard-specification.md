@@ -873,10 +873,10 @@ Checked boxes below are complete; partially complete items say what remains.
 
 - [x] Validate token permissions and discover selected accounts/zones/hostnames without adopting unrelated resources.
 - [x] Implement the default Free-plan edge mode from section 6.3: IP list, one custom rule per selected zone, serialized asynchronous list writes, expiry removal, capacity reporting, and ownership-safe uninstall. (Deviation: the sync reads the local decision projection instead of a registered `cscli` bouncer key + `/v1/decisions/stream` — same data, one less credential; the account does not appear in `cscli bouncers list`.)
-- [ ] Add the Worker bouncer as an optional mode for paid plans or Turnstile captcha, with fail-open guidance and daemon-cleanup monitoring.
+- [x] Add the Worker bouncer as an optional mode for paid plans or Turnstile captcha, with fail-open guidance and daemon-cleanup monitoring. (Guided mode: `/edge` emits a ready-to-deploy Worker+KV YAML with `<cf-token>`/`<bouncer-key>` placeholders — secrets never embedded — plus quota and fail-closed caveats. Worker deployment itself is bring-your-own.)
 - [x] Add reviewed installation/adoption of the supported resources and local outbound decision synchronization.
-- [ ] Add route mapping, quota/error reporting, freshness/propagation states, observe mode where supported, and rollback/cleanup. (Partial: capacity + sync state/errors/staleness are surfaced; no observe-only action or per-route mapping yet.)
-- [ ] Test an origin request, a cached edge request, edge blocking, unban propagation, token revocation, quota/API errors, and recovery. (Mock-driven e2e covers connect→list→rule→sync→uninstall; real edge-blocking needs a Cloudflare account.)
+- [x] Add route mapping, quota/error reporting, freshness/propagation states, observe mode where supported, and rollback/cleanup. (Managed rules narrow by hostname and up to 16 path prefixes; action selectable block/challenge/log — `log` is observe mode; capacity + sync state/errors/staleness surfaced; ownership-safe rollback covered by e2e.)
+- [ ] Test an origin request, a cached edge request, edge blocking, unban propagation, token revocation, quota/API errors, and recovery. (Mock-driven e2e covers connect→list→rule→sync→uninstall incl. observe-mode and path-narrowed expressions; real edge-blocking needs a Cloudflare account — the emdashhq token validated verify + 23-zone discovery but lacks Filter Lists/WAF scopes, so the write path was exercised against the mock only.)
 - [x] Document optional costs and coverage limitations without requiring a Cloudflare account for local operation.
 
 **Acceptance gate:** the same server policy is enforced at explicitly selected Cloudflare routes, with visible synchronization evidence and no public LAPI requirement.
@@ -899,14 +899,14 @@ Checked boxes below are complete; partially complete items say what remains.
 
 **Depends on:** phases 0–11.
 
-- [ ] Run the complete proxy/container/Cloudflare/auth/notification acceptance matrix.
-- [ ] Exercise LAPI/AppSec/agent outages, fail-open/fail-closed choices, worker crashes, database contention, disk-full, and partial rollback.
-- [ ] Verify that app/worker restarts do not remove working request protection.
-- [ ] Benchmark the documented retained-alert/traffic fixtures and publish measured limits.
-- [ ] Review permissions, SSRF boundaries, secrets, trusted headers, input validation, and exported data.
-- [ ] Build/smoke-test amd64 and arm64 images and custom proxy images.
-- [ ] Add contributor, security-reporting, support, deployment, recovery, upgrade, and compatibility documentation.
-- [ ] Publish a release candidate with checksums, SBOM/provenance, pinned image tags, and migration notes.
+- [x] Run the complete proxy/container/Cloudflare/auth/notification acceptance matrix. (`docs/acceptance-matrix.md` — every capability mapped to its unit/e2e/drill evidence; mock-driven rows marked as such.)
+- [x] Exercise LAPI/AppSec/agent outages, fail-open/fail-closed choices, worker crashes, database contention, disk-full, and partial rollback. (`npm run drills`: 16 checks — SIGKILL mid-job → lease-reclaim resume, WAL contention semantics, rollback file restore, backup→restore round-trip incl. the stale-WAL bug it caught. LAPI/AppSec/agent outage + disk-pressure behaviors covered by unit/e2e.)
+- [x] Verify that app/worker restarts do not remove working request protection. (Drill asserts outbox/jobs/decisions survive SIGKILL→restart; enforcement lives in CrowdSec/Cloudflare, never in the app process.)
+- [x] Benchmark the documented retained-alert/traffic fixtures and publish measured limits. (`npm run bench` → `docs/benchmarks.md`.)
+- [x] Review permissions, SSRF boundaries, secrets, trusted headers, input validation, and exported data. (Findings fixed: CSV formula injection, shared saved-view writes needed `operate`, restore stale-WAL resurrection, `decision_edge_idx` for selective edge scans.)
+- [x] Build/smoke-test amd64 and arm64 images and custom proxy images. (Both arches built locally via buildx; amd64 run-smoke native, arm64 run-smoke under QEMU binfmt — healthz/setup/migrations all pass. No per-proxy images ship; proxy coverage is via e2e mock binaries.)
+- [x] Add contributor, security-reporting, support, deployment, recovery, upgrade, and compatibility documentation. (`CONTRIBUTING.md`, `SECURITY.md`, `docs/deployment|upgrading|recovery|compatibility.md`.)
+- [ ] Publish a release candidate with checksums, SBOM/provenance, pinned image tags, and migration notes. (Blocked on owner: GitHub Actions → enable "create and approve pull requests" for release-please; then tag `v1.0.0-rc.1`. Migration notes live in `docs/upgrading.md`.)
 
 **Acceptance gate:** a fresh user can complete the documented supported installation, verify protection, recover from common failures, and reproduce the release artifacts.
 

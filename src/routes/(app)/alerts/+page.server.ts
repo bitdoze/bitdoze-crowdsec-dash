@@ -5,7 +5,7 @@ import { db } from '#lib/server/db/index.ts';
 import { listAlerts, projectionFreshness } from '#lib/server/crowdsec/lists.ts';
 import { getServer } from '#lib/server/crowdsec/connection.ts';
 import { savedView, site } from '#lib/server/db/app.schema.ts';
-import { requireUser } from '#lib/server/roles.ts';
+import { requirePermission } from '#lib/server/roles.ts';
 import { recordAudit } from '#lib/server/audit.ts';
 
 export const load: PageServerLoad = async ({ url }) => {
@@ -39,7 +39,7 @@ export const load: PageServerLoad = async ({ url }) => {
 export const actions: Actions = {
 	/** Save the current filter set as a named view chip (spec 9). */
 	saveView: async (event) => {
-		await requireUser(event);
+		await requirePermission(event, 'operate'); // shared views — a write, not a read
 		const formData = await event.request.formData();
 		const name = formData.get('name')?.toString().trim() ?? '';
 		if (!name || name.length > 60) error(400, 'Give the view a name (≤60 chars).');
@@ -63,7 +63,7 @@ export const actions: Actions = {
 	},
 
 	deleteView: async (event) => {
-		await requireUser(event);
+		await requirePermission(event, 'operate');
 		const formData = await event.request.formData();
 		const vid = formData.get('id')?.toString();
 		if (vid) await db.delete(savedView).where(eq(savedView.id, vid));

@@ -121,11 +121,28 @@ describe('ruleExpression / edgeRule', () => {
 			'(ip.src in $crowdsec_dash_srv and http.host in {"a.example.com" "b.example.com"})'
 		);
 	});
+	it('narrows further to path prefixes', () => {
+		expect(ruleExpression('crowdsec_dash_srv', ['a.example.com'], ['/admin', '/wp-login'])).toBe(
+			'(ip.src in $crowdsec_dash_srv and http.host in {"a.example.com"} and ' +
+				'(starts_with(http.request.uri.path, "/admin") or starts_with(http.request.uri.path, "/wp-login")))'
+		);
+	});
+	it('paths alone narrow the whole zone', () => {
+		expect(ruleExpression('crowdsec_dash_srv', [], ['/admin'])).toBe(
+			'(ip.src in $crowdsec_dash_srv and (starts_with(http.request.uri.path, "/admin")))'
+		);
+	});
 	it('edgeRule carries the managed ref and chosen action', () => {
 		const r = edgeRule('crowdsec_dash_srv', [], 'challenge');
 		expect(r.ref).toBe(RULE_REF);
 		expect(r.action).toBe('challenge');
 		expect(r.expression).toContain('$crowdsec_dash_srv');
+	});
+	it('log action passes through as observe mode', () => {
+		const r = edgeRule('crowdsec_dash_srv', [], 'log', ['/private']);
+		expect(r.action).toBe('log');
+		expect(r.expression).toContain('starts_with');
+		expect(r.description).toContain('selected paths');
 	});
 });
 

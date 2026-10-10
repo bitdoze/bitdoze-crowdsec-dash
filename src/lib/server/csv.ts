@@ -1,7 +1,11 @@
 /** Minimal CSV encoder for export endpoints — quotes commas/newlines/quotes. */
 function cell(v: unknown): string {
 	if (v === null || v === undefined) return '';
-	const s = v instanceof Date ? v.toISOString() : String(v);
+	let s = v instanceof Date ? v.toISOString() : String(v);
+	// Formula injection: attacker-controlled fields (alert.message, scenario,
+	// hostname…) can begin with = + - @ tab — prefix with ' so Excel/Sheets
+	// treat the cell as text.
+	if (/^[\t\r ]*[=+\-@]/.test(s)) s = `'${s}`;
 	return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

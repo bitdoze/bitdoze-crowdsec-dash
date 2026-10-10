@@ -13,7 +13,8 @@ import {
 	uninstallEdge,
 	disconnectAccount,
 	EdgeError,
-	parseHostnames
+	parseHostnames,
+	parsePaths
 } from '#lib/server/cloudflare/accounts.ts';
 
 export const load: PageServerLoad = async (event) => {
@@ -55,6 +56,13 @@ export const load: PageServerLoad = async (event) => {
 					hostnames: (() => {
 						try {
 							return JSON.parse(z.hostnames) as string[];
+						} catch {
+							return [] as string[];
+						}
+					})(),
+					paths: (() => {
+						try {
+							return JSON.parse(z.paths) as string[];
 						} catch {
 							return [] as string[];
 						}
@@ -125,14 +133,17 @@ export const actions: Actions = {
 		const fd = await event.request.formData();
 		const zoneId = fd.get('zoneId')?.toString() ?? '';
 		const selected = fd.get('selected') === '1';
-		const action = fd.get('action')?.toString() === 'challenge' ? 'challenge' : 'block';
+		const rawAction = fd.get('action')?.toString() ?? 'block';
+		const action =
+			rawAction === 'challenge' || rawAction === 'log' ? rawAction : ('block' as const);
 		const hostnames = parseHostnames(fd.get('hostnames')?.toString() ?? '');
+		const paths = parsePaths(fd.get('paths')?.toString() ?? '');
 		try {
-			await setZoneSelection(zoneId, { selected, hostnames, action });
+			await setZoneSelection(zoneId, { selected, hostnames, paths, action });
 			await recordAudit({
 				event,
 				action: 'cloudflare.zoneSelection',
-				detail: { zoneId, selected, hostnames, ruleAction: action, by: user.id }
+				detail: { zoneId, selected, hostnames, paths, ruleAction: action, by: user.id }
 			});
 			return {
 				notice: selected

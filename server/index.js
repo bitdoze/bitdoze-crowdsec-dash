@@ -44,8 +44,9 @@ const isTrustedProxy = trustedProxyMatcher(process.env.TRUSTED_PROXIES);
 let handler;
 try {
 	({ handler } = await import('../build/handler.js'));
-} catch {
+} catch (error) {
 	console.error('Could not load ../build/handler.js — run `npm run build` first.');
+	console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
 	process.exit(1);
 }
 

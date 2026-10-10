@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createClient } from '@libsql/client';
-import { ensureConnected } from './helpers.ts';
+import { ensureConnected, e2eDb } from './helpers.ts';
 
 const CF = 'http://127.0.0.1:8091';
 
@@ -23,7 +22,7 @@ test.beforeEach(async ({ request }) => {
 	// A clean slate per test — .e2e-data keeps dashboard rows across runs,
 	// so purge CF rows the same way the notification spec purges outbox.
 	await request.get(`${CF}/_reset`);
-	const c = createClient({ url: 'file:.e2e-data/app.db' });
+	const c = e2eDb();
 	try {
 		await c.execute('DELETE FROM cloudflare_zone');
 		await c.execute('DELETE FROM cloudflare_account');
@@ -56,17 +55,40 @@ test('edge: connect → list → zone rule → sync → uninstall', async ({ pag
 	await expect(page.getByRole('status').first()).toContainText('Edge list ready');
 	await expect(page.getByText('crowdsec_dash_server').first()).toBeVisible();
 
-	// Select zone-a, narrowed to one hostname, block action.
+	// Select zone-a, narrowed to one hostname + one path prefix, observe mode.
 	const zoneRow = page.locator('li', { hasText: 'e2e-cf.example.com' });
 	await zoneRow.getByRole('checkbox').check();
 	await zoneRow.getByPlaceholder(/all hosts/).fill('app.e2e-cf.example.com');
+	await zoneRow.getByPlaceholder(/all paths/).fill('/admin /api/internal');
+	await zoneRow.locator('select[name="action"]').selectOption('log');
 	await zoneRow.getByRole('button', { name: 'Apply' }).click();
 	await expect(page.getByRole('status').first()).toContainText('rule installed');
 	let state = await cfState(request);
 	const rulesA = state.rulesets['zone-a'] ?? [];
 	expect(rulesA).toHaveLength(1);
 	expect(rulesA[0].ref).toBe('crowdsec-dash-edge');
+	expect(rulesA[0].action).toBe('log');
 	expect(rulesA[0].expression).toContain('http.host in {"app.e2e-cf.example.com"}');
+	expect(rulesA[0].expression).toContain('starts_with(http.request.uri.path, "/admin")');
+
+	// Switch the same zone to blocking — the managed rule updates in place.
+	await zoneRow.locator('select[name="action"]').selectOption('block');
+	await zoneRow.getByRole('button', { name: 'Apply' }).click();
+	await expect(page.getByRole('status').first()).toContainText('rule installed');
+	state = await cfState(request);
+	expect(state.rulesets['zone-a'][0].action).toBe('block');
+
+	// Worker-bouncer config downloads with placeholders — no stored secrets.
+	const accId = await page.evaluate(async () => {
+		const a = document.querySelector<HTMLAnchorElement>('a[href*="worker-bouncer.yaml"]');
+		return new URL(a?.href ?? '').searchParams.get('account');
+	});
+	const dl = await request.get(`/edge/worker-bouncer.yaml?account=${accId}`);
+	expect(dl.status()).toBe(200);
+	const yaml = await dl.text();
+	expect(yaml).toContain('<bouncer-key>');
+	expect(yaml).toContain('<cf-token>');
+	expect(yaml).not.toContain('e2e-cf-token');
 
 	// Sync pushes the local decision projection into the list.
 	await page.getByRole('button', { name: 'Sync now' }).click();

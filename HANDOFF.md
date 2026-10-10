@@ -193,6 +193,18 @@ Verified: `check` 0/0, `npm test` 190, build, `e2e/edge.spec.ts` green incl. CF-
 - **Operations on `/system` (`ops.ts`):** component versions (app/Node/CrowdSec/agent), GitHub latest-release check cached in `app_setting` (daily by the worker + manual button; errors displayed, upgrade stays manual), `statfs` disk panel + hourly pressure events (warn <15 %, critical <5 %, dedupe + escalation + recovery), retention policy per data class (daily + manual run, last-run stamp), `VACUUM INTO` backup download (`configure`-gated, audited, keeps 10), redacted support-bundle JSON download, `npm run backup`/`restore` CLI (restore keeps `app.db.restore-bak`).
 - **Verified:** backup→restore round-trip on real files; 10 ops + expanded notify unit tests; `e2e/ops.spec.ts` covers rules/preview/edit, ops module + both downloads, trend charts.
 
+### Phase 10 leftovers + Phase 12 verification & release prep (this session)
+
+- **Observe mode + route mapping:** `cloudflare_zone.paths` (migration `0010`) + `action` gains `log`. `ruleExpression()` emits `http.host in {...}` and `starts_with(http.request.uri.path, "...")` clauses; `parsePaths` rejects quotes/backslashes and caps at 16 prefixes ≤128 chars.
+- **Worker-bouncer guided mode:** `/edge/worker-bouncer.yaml` (`configure`-gated, audited) emits a deploy-ready Worker+KV YAML with `<cf-token>`/`<bouncer-key>` placeholders, selected zone IDs, and the LAPI URL — secrets are never decrypted or embedded. Fail-closed and quota caveats are in the file header and UI.
+- **Resilience drills** `npm run drills` (16 checks): SIGKILL mid-job → 60 s lease reclaim → step-resume; restart preserves outbox/jobs/decisions; WAL-mode concurrent reads under a held write lock; bounded `busy_timeout` failure (never a hang); agent job rollback restores file contents; real `backup.mjs`→`restore.mjs` round-trip incl. post-restore boot.
+- **Benchmarks** `npm run bench` → `docs/benchmarks.md`: ~11k alert inserts/s, ~2.6k list queries/s, edge-candidate scan ~82 ms/10k, ~260 req/s warm HTTP. New `decision_edge_idx` (migration `0011`) helps selective scans; it is a no-op on the 100 %-match fixture — documented.
+- **Security review — fixed:** CSV formula injection (`csv.ts` prefixes `'` + regression test); shared saved-view create/delete now require `operate` (were viewer-reachable); `restore.mjs` no longer resurrects post-backup rows via stale WAL (checkpoint + atomic rename); post-restore DB normalized to WAL so boot can't race a journal-mode switch.
+- **Security review — verified clean:** every action/endpoint permission-gated; SSRF `assertSafeHttpUrl` at save *and* send; `sanitizeRedirectTo` same-origin only; `x-forwarded-*` pinned from `ORIGIN`, XFF only from `TRUSTED_PROXIES`; `resolveSecret` env→`_FILE`→0600-generated; support bundle carries counts/versions/state only; agent refuses to run without a token, no shell, `resolve()`-then-prefix file roots with trailing sep (no `/etc/crowdsec-evil` bypass), allowlisted services, redacted errors; Better Auth DB rate limiting + sign-up disabled + self-lockout guards.
+- **Docs:** `docs/acceptance-matrix.md`, `docs/benchmarks.md`, `docs/deployment.md`, `docs/upgrading.md`, `docs/recovery.md`, `docs/compatibility.md`, `CONTRIBUTING.md`, `SECURITY.md`; README links them.
+- **Images:** amd64 + arm64 both built via buildx; amd64 run-smoke native (healthz/setup/healthy), arm64 run-smoke under QEMU binfmt (boot, migrations, `/healthz` 200). No per-proxy images ship — proxy coverage is e2e `mock-bin`.
+- **Remaining:** real edge lifecycle (needs the scoped CF token, owner action below), real-host proxy matrix (needs the Docker host), release-please tag (owner action 1).
+
 ## Actions only the owner can take
 
 1. GitHub → Settings → Actions → General → enable **"Allow GitHub Actions to create and approve pull requests"**. Release-please fails without it (latest Release run: "GitHub Actions is not permitted to create or approve pull requests").
@@ -206,11 +218,11 @@ Verified: `check` 0/0, `npm test` 190, build, `e2e/edge.spec.ts` green incl. CF-
 
 - All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 
-### 2. Real-host validation for phases 7–10, then Phase 12 (v1.0.0-rc): verification matrix
+### 2. Real-host validation, then tag the release candidate
 
-Phases 7–11 are on `main` with stub-driven e2e; real validation needs a Docker host with the agent (`AGENT_DOCKER=1`, `AGENT_SERVICES` including the proxy targets) — deploy the demo compose, run adopt→apply→validate→reload per proxy, exercise bypass/recreation/failure paths, walk a site through WAF levels 3→4 against real CRS alerts — plus a Cloudflare account with a test zone for the real edge lifecycle (token revocation, quota, propagation delay, adopt-existing-list). Phase 12 is the cross-component acceptance matrix: outage/failure drills, restart-survival proof, benchmarks against the documented fixtures, amd64/arm64 image smokes, and release-candidate prep.
+Phase 12 is done except the release-candidate publish (needs owner action 1). Phases 7–11 are on `main` with stub-driven e2e; real validation needs a Docker host with the agent (`AGENT_DOCKER=1`, `AGENT_SERVICES` including the proxy targets) — deploy the demo compose, run adopt→apply→validate→reload per proxy, exercise bypass/recreation/failure paths, walk a site through WAF levels 3→4 against real CRS alerts — plus a Cloudflare token scoped `Zone:Read` + `Account Filter Lists:Edit` + `Zone WAF:Edit` on a **test** zone for the real edge lifecycle (token revocation, quota, propagation delay, adopt-existing-list).
 
-Later phases (12–13) are fully described in the spec.
+Phase 13 (v1.0.0) is what remains: resolve RC findings, publish the stable release, test RC→stable upgrade + backup restore.
 
 ## Gotchas already learned
 
@@ -241,6 +253,10 @@ Later phases (12–13) are fully described in the spec.
 - **Server-only modules in components:** don't import anything from `#lib/server/*` into `.svelte` files — even `import type` can drag server code into the client graph. Shared shapes go in `src/lib/` (e.g. `notify-channels.ts`) and get re-exported server-side.
 - **Dependency age rule:** pin versions ≥7 days old — `nodemailer@^10.0.13`, not the 2-day-old 10.0.16.
 - **Outbox backlog starvation:** `dispatchOutbox` takes the 20 _oldest_ pending rows — a persistent `.e2e-data` outbox backlog starves fresh test deliveries (`pending`, no `lastError` → "delivery not attempted"). Purge `notification_outbox`/`notification_channel` in the test before asserting.
+- **libsql `close()` is lazy:** closing a WAL connection releases its OS locks/shm read-marks asynchronously (~500 ms). Any immediate `journal_mode` switch on the same file fails `SQLITE_BUSY` — `busy_timeout` does not apply to mode changes. Copy→checkpoint→**rename** instead of truncating in place (`scripts/restore.mjs`).
+- **Restoring a WAL database:** copying `app.db` over itself while leaving `app.db-wal` replays the *old* WAL onto the restored file — post-backup writes resurrect. Always remove/replace the `-wal`/`-shm` siblings atomically with the main file.
+- **WAL contention is bounded, not fair:** a writer waiting on `busy_timeout` starves rather than queues when another writer holds the lock past the timeout — expect `SQLITE_BUSY` after ~5 s, not eventual success. The drill asserts the honest semantics.
+- **Stale e2e servers hold `.e2e-data`:** leftover mock-lapi/mock-cf processes keep 8090/8091 and the DB locked — `SQLITE_BUSY` on the next run's purge. Kill by port before rerunning; `e2eDb()` sets a 10 s busy timeout as backstop.
 
 ## How to track progress
 

@@ -16,6 +16,16 @@ describe('toCsv', () => {
 		const d = new Date('2024-06-01T00:00:00Z');
 		expect(toCsv(['t'], [[d]])).toBe(`t\n${d.toISOString()}\n`);
 	});
+
+	it('neutralizes spreadsheet formula injection', () => {
+		const out = toCsv(
+			['v'],
+			[['=1+1'], ['+SUM(A1)'], ['-2|cmd'], ['@NOW()'], [' =1'], ['\t=1'], ['safe']]
+		);
+		const cells = out.split('\n').slice(1, -1);
+		for (const c of cells.slice(0, -1)) expect(c.startsWith("'")).toBe(true);
+		expect(cells.at(-1)).toBe('safe');
+	});
 });
 
 describe('csvResponse', () => {
