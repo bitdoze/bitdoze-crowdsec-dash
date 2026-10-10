@@ -206,3 +206,193 @@ describe('validateChannel', () => {
 		).toBeTruthy();
 	});
 });
+
+describe('channel rules', () => {
+	let db: TestDb;
+	beforeEach(async () => {
+		db = makeDb();
+		await migrate(db, { migrationsFolder: path.resolve(process.cwd(), 'drizzle') });
+	});
+
+	it('class filter: only listed classes fan out', async () => {
+		await saveChannel(db, {
+			name: 'security only',
+			type: 'webhook',
+			config: { url: 'https://hooks.example.com/x' },
+			secrets: {},
+			enabled: true,
+			minSeverity: 'info',
+			classes: ['security']
+		});
+		await recordEvent(db, { eventKey: 'a1', class: 'admin', severity: 'info', title: 'admin' });
+		await recordEvent(db, { eventKey: 's1', class: 'security', severity: 'info', title: 'sec' });
+		const rows = await db.select().from(notificationOutbox);
+		const notifIds = rows.map((r) => r.notificationId);
+		const notifs = await db.select().from(notification);
+		const delivered = notifs.filter((n) => notifIds.includes(n.id));
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0].class).toBe('security');
+	});
+
+	it('site filter: non-matching site events do not fan out, system events always do', async () => {
+		await saveChannel(db, {
+			name: 'one site',
+			type: 'webhook',
+			config: { url: 'https://hooks.example.com/x' },
+			secrets: {},
+			enabled: true,
+			minSeverity: 'info',
+			siteIds: ['site-a']
+		});
+		await recordEvent(db, {
+			eventKey: 'sa',
+			class: 'job',
+			severity: 'warning',
+			title: 'site A',
+			site: 'site-a'
+		});
+		await recordEvent(db, {
+			eventKey: 'sb',
+			class: 'job',
+			severity: 'warning',
+			title: 'site B',
+			site: 'site-b'
+		});
+		await recordEvent(db, {
+			eventKey: 'sys',
+			class: 'outage',
+			severity: 'warning',
+			title: 'system'
+		});
+		const rows = await db.select().from(notificationOutbox);
+		expect(rows).toHaveLength(2); // site-a + system event
+	});
+
+	it('quiet hours defer non-critical rows to the window end', async () => {
+		await saveChannel(db, {
+			name: 'quiet',
+			type: 'webhook',
+			config: { url: 'https://hooks.example.com/x' },
+			secrets: {},
+			enabled: true,
+			minSeverity: 'info',
+			quietStart: '22:00',
+			quietEnd: '06:00'
+		});
+		await recordEvent(db, { eventKey: 'q1', class: 'job', severity: 'warning', title: 'night' });
+		await recordEvent(db, {
+			eventKey: 'q2',
+			class: 'outage',
+			severity: 'critical',
+			title: 'urgent'
+		});
+		const send = vi.fn(async () => {});
+		const now = new Date('2026-10-09T23:30:00Z'); // inside quiet window
+		await dispatchOutbox(db, { sendImpl: send, now });
+		// critical sent, warning deferred
+		expect(send).toHaveBeenCalledOnce();
+		const rows = await db.select().from(notificationOutbox);
+		const deferred = rows.find((r) => r.nextRetryAt !== null && r.state === 'pending');
+		const delivered = rows.find((r) => r.state === 'delivered');
+		expect(deferred?.nextRetryAt?.getUTCHours()).toBe(6);
+		expect(deferred?.nextRetryAt?.getUTCMinutes()).toBe(0);
+		expect(delivered).toBeTruthy();
+	});
+
+	it('digest batches pending rows into one payload after the interval', async () => {
+		await saveChannel(db, {
+			name: 'digest',
+			type: 'webhook',
+			config: { url: 'https://hooks.example.com/x' },
+			secrets: {},
+			enabled: true,
+			minSeverity: 'info',
+			digestMinutes: 15
+		});
+		await recordEvent(db, { eventKey: 'd1', class: 'job', severity: 'warning', title: 'one' });
+		await recordEvent(db, { eventKey: 'd2', class: 'admin', severity: 'info', title: 'two' });
+		const send = vi.fn(async () => {});
+		// immediately — nothing flushed (oldest row is fresh)
+		const r1 = await dispatchOutbox(db, { sendImpl: send });
+		expect(r1.sent).toBe(0);
+		expect(send).not.toHaveBeenCalled();
+		// 16 minutes later — one digest send, both rows delivered
+		const r2 = await dispatchOutbox(db, {
+			sendImpl: send,
+			now: new Date(Date.now() + 16 * 60_000)
+		});
+		expect(r2.sent).toBe(2);
+		expect(send).toHaveBeenCalledOnce();
+		const payload = send.mock.calls[0][1] as { title: string; body: string };
+		expect(payload.title).toMatch(/2 notifications/);
+		expect(payload.body).toContain('one');
+		expect(payload.body).toContain('two');
+	});
+
+	it('digest failure retries the batch, not individual rows', async () => {
+		await saveChannel(db, {
+			name: 'digest',
+			type: 'webhook',
+			config: { url: 'https://hooks.example.com/x' },
+			secrets: {},
+			enabled: true,
+			minSeverity: 'info',
+			digestMinutes: 5
+		});
+		await recordEvent(db, { eventKey: 'df1', class: 'job', severity: 'info', title: 'a' });
+		const send = vi.fn(async () => {
+			throw new Error('digest nope');
+		});
+		await dispatchOutbox(db, { sendImpl: send, now: new Date(Date.now() + 6 * 60_000) });
+		const row = (await db.select().from(notificationOutbox))[0];
+		expect(row.state).toBe('pending');
+		expect(row.attempts).toBe(1);
+		expect(row.lastError).toBe('digest nope');
+	});
+});
+
+describe('previewDelivery', () => {
+	let db: TestDb;
+	beforeEach(async () => {
+		db = makeDb();
+		await migrate(db, { migrationsFolder: path.resolve(process.cwd(), 'drizzle') });
+	});
+
+	it('renders the webhook payload with secrets redacted', async () => {
+		const { previewDelivery } = await import('#lib/server/notify/deliver.ts');
+		const id = await webhookChannel(db); // has token s3cr3t-token
+		const channel = await db.query.notificationChannel.findFirst({
+			where: (t, { eq }) => eq(t.id, id)
+		});
+		const p = await previewDelivery(channel!);
+		expect(p.destination).toBe('hooks.example.com/x');
+		expect(p.headers.authorization).toBe('•••');
+		expect(p.body).toContain('Sample event');
+		expect(JSON.stringify(p)).not.toContain('s3cr3t-token');
+	});
+});
+
+describe('at-least-once delivery', () => {
+	let db: TestDb;
+	beforeEach(async () => {
+		db = makeDb();
+		await migrate(db, { migrationsFolder: path.resolve(process.cwd(), 'drizzle') });
+	});
+
+	it('an ambiguous send (timed out after the destination accepted) may deliver twice', async () => {
+		await webhookChannel(db);
+		await recordEvent(db, { eventKey: 'dup', class: 'job', severity: 'info', title: 'x' });
+		let calls = 0;
+		const send = vi.fn(async () => {
+			calls++;
+			if (calls === 1) throw new Error('timeout — destination may have received it');
+		});
+		await dispatchOutbox(db, { sendImpl: send });
+		let row = (await db.select().from(notificationOutbox))[0];
+		expect(row.state).toBe('pending'); // ambiguous — must retry
+		await dispatchOutbox(db, { sendImpl: send, now: new Date(Date.now() + 120_000) });
+		row = (await db.select().from(notificationOutbox))[0];
+		expect(row.state).toBe('delivered');
+		expect(calls).toBe(2); // at-least-once: duplicates possible, loss never
+	});
+});

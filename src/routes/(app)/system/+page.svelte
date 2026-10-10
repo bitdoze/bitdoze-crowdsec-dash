@@ -1,10 +1,24 @@
 <script lang="ts">
 	import type { PageProps } from './$types';
+	import { resolve } from '$app/paths';
 	import Module from '#lib/components/Module.svelte';
 	import Stamp from '#lib/components/Stamp.svelte';
 	import Button from '#lib/components/Button.svelte';
 
 	let { data, form }: PageProps = $props();
+	const versionRows = $derived([
+		['Dashboard', data.versions.app],
+		['Node', data.versions.node],
+		['CrowdSec', data.versions.crowdsec],
+		['Host agent', data.versions.agent]
+	] as [string, string | null][]);
+	const retFields = $derived([
+		['ret_notifications', 'Notifications', data.retention.notifications],
+		['ret_jobs', 'Jobs', data.retention.jobs],
+		['ret_audit', 'Audit', data.retention.audit],
+		['ret_metrics', 'Metrics', data.retention.metrics],
+		['ret_decisionRequests', 'Decision requests', data.retention.decisionRequests]
+	] as [string, string, number][]);
 
 	const jobStamp: Record<string, 'verified' | 'stale' | 'failed' | 'not_configured'> = {
 		queued: 'not_configured',
@@ -270,6 +284,116 @@
 				</table>
 			</div>
 		{/if}
+	</Module>
+
+	<Module title="Operations">
+		<div class="grid gap-4 lg:grid-cols-2">
+			<div>
+				<p class="text-xs font-medium tracking-wide text-ink-3 uppercase">Component versions</p>
+				<table class="mt-2 w-full text-left text-sm">
+					<tbody>
+						{#each versionRows as [label, v] (label)}
+							<tr class="border-b border-rule last:border-0">
+								<td class="py-1.5 pr-3 text-ink-3">{label}</td>
+								<td class="py-1.5 font-mono text-xs">{v ?? 'not connected'}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+				<div class="mt-3 flex flex-wrap items-center gap-3">
+					{#if data.canOperate}
+						<form method="post" action="?/checkUpdate">
+							<Button type="submit" size="sm" variant="secondary">Check for updates</Button>
+						</form>
+					{/if}
+					{#if data.updateCheck}
+						<span class="text-xs text-ink-3">
+							{#if data.updateCheck.error}
+								Last check failed: {data.updateCheck.error}
+							{:else if data.updateCheck.updateAvailable}
+								Update available:
+								<!-- release URL comes from the GitHub API response -->
+								<!-- eslint-disable svelte/no-navigation-without-resolve -->
+								<a
+									href={data.updateCheck.latestUrl}
+									class="text-accent underline"
+									target="_blank"
+									rel="noreferrer">{data.updateCheck.latestTag}</a
+								>
+								<!-- eslint-enable svelte/no-navigation-without-resolve -->
+								— review the release notes, then pull the new image or package and restart.
+							{:else}
+								Latest release {data.updateCheck.latestTag ?? 'unknown'} · checked {fmt(
+									new Date(data.updateCheck.checkedAt)
+								)}
+							{/if}
+						</span>
+					{:else}
+						<span class="text-xs text-ink-3">No release check yet — the worker checks daily.</span>
+					{/if}
+				</div>
+			</div>
+
+			<div>
+				<p class="text-xs font-medium tracking-wide text-ink-3 uppercase">Disk &amp; data</p>
+				{#if data.disk}
+					<p class="mt-2 text-sm text-ink-2">
+						{(data.disk.freeBytes / 1073741824).toFixed(1)} GiB free of
+						{(data.disk.totalBytes / 1073741824).toFixed(1)} GiB ({data.disk.freePct.toFixed(0)}%)
+						on
+						<span class="font-mono text-xs">{data.disk.path}</span>
+					</p>
+				{/if}
+				<form method="post" action="?/saveRetention" class="mt-3 space-y-2">
+					<div class="flex flex-wrap items-end gap-3">
+						{#each retFields as [name, label, val] (name)}
+							<label class="flex flex-col gap-1 text-xs text-ink-3">
+								{label} (days)
+								<input
+									type="number"
+									{name}
+									value={val}
+									min="1"
+									max="3650"
+									class="w-24 rounded-[3px] border border-line bg-sheet px-2 py-1.5 text-sm text-ink"
+								/>
+							</label>
+						{/each}
+					</div>
+					<div class="flex items-center gap-2">
+						{#if data.canConfigure}
+							<Button type="submit" size="sm" variant="secondary">Save retention</Button>
+						{/if}
+						{#if data.canOperate}
+							<Button type="submit" size="sm" variant="secondary" formaction="?/runRetention">
+								Run cleanup now
+							</Button>
+						{/if}
+						{#if data.retentionLastRun}
+							<span class="text-xs text-ink-3">last run {fmt(new Date(data.retentionLastRun))}</span
+							>
+						{/if}
+					</div>
+				</form>
+			</div>
+		</div>
+
+		<div class="mt-4 flex flex-wrap items-center gap-3 border-t border-rule pt-3">
+			<a
+				href={resolve('/(app)/system/backup.db')}
+				class="rounded-[3px] border border-line px-3 py-1.5 text-sm text-ink-2 hover:bg-sheet"
+				>Download database backup</a
+			>
+			<a
+				href={resolve('/(app)/system/support-bundle.json')}
+				class="rounded-[3px] border border-line px-3 py-1.5 text-sm text-ink-2 hover:bg-sheet"
+				>Download support bundle</a
+			>
+			<span class="text-xs text-ink-3">
+				{data.backups.length} backup{data.backups.length === 1 ? '' : 's'} kept on the server
+				{#if data.backups[0]}— newest {fmt(data.backups[0].at)}{/if}
+			</span>
+		</div>
 	</Module>
 
 	<Module title="Recent audit">

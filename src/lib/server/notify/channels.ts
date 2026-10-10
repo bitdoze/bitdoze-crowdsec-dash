@@ -27,7 +27,18 @@ export interface ChannelInput {
 	secrets: Record<string, string>;
 	enabled: boolean;
 	minSeverity: 'info' | 'warning' | 'critical';
+	/** Class allowlist; empty = all. */
+	classes?: string[];
+	/** Site allowlist; empty = all. */
+	siteIds?: string[];
+	/** Quiet hours `HH:MM` UTC — both or neither. */
+	quietStart?: string;
+	quietEnd?: string;
+	/** >0 batches deliveries into a digest every N minutes. */
+	digestMinutes?: number;
 }
+
+const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 /**
  * Validate channel input. Returns an error string or the normalized fields.
@@ -61,6 +72,18 @@ export function validateChannel(input: ChannelInput): string | null {
 		const port = Number(input.config.port);
 		if (!Number.isInteger(port) || port < 1 || port > 65535) return 'Invalid SMTP port.';
 	}
+	const qs = input.quietStart?.trim() ?? '';
+	const qe = input.quietEnd?.trim() ?? '';
+	if (Boolean(qs) !== Boolean(qe)) return 'Quiet hours need both a start and an end (HH:MM, UTC).';
+	if (qs && (!HHMM.test(qs) || !HHMM.test(qe))) return 'Quiet hours must be HH:MM (00:00–23:59).';
+	if (input.digestMinutes !== undefined && input.digestMinutes !== 0) {
+		if (
+			!Number.isInteger(input.digestMinutes) ||
+			input.digestMinutes < 5 ||
+			input.digestMinutes > 1440
+		)
+			return 'Digest interval must be 0 (off) or 5–1440 minutes.';
+	}
 	return null;
 }
 
@@ -75,6 +98,14 @@ export async function saveChannel(
 		? await symmetricEncrypt({ key: encKey(), data: JSON.stringify(secretJson) })
 		: null;
 
+	const rules = {
+		classes: JSON.stringify(input.classes ?? []),
+		siteIds: JSON.stringify(input.siteIds ?? []),
+		quietStart: input.quietStart?.trim() || null,
+		quietEnd: input.quietEnd?.trim() || null,
+		digestMinutes: input.digestMinutes ?? 0
+	};
+
 	if (input.id) {
 		await database
 			.update(notificationChannel)
@@ -86,7 +117,8 @@ export async function saveChannel(
 				// that leaves token fields blank keeps the stored secret.
 				...(hasSecrets ? { secretEnc } : {}),
 				enabled: input.enabled,
-				minSeverity: input.minSeverity
+				minSeverity: input.minSeverity,
+				...rules
 			})
 			.where(eq(notificationChannel.id, input.id));
 		return input.id;
@@ -99,7 +131,8 @@ export async function saveChannel(
 		config: JSON.stringify(configJson),
 		secretEnc,
 		enabled: input.enabled,
-		minSeverity: input.minSeverity
+		minSeverity: input.minSeverity,
+		...rules
 	});
 	return id;
 }
@@ -118,8 +151,23 @@ export async function listChannels(database: typeof db) {
 		config: JSON.parse(r.config) as Record<string, string>,
 		hasSecrets: Boolean(r.secretEnc),
 		enabled: r.enabled,
-		minSeverity: r.minSeverity
+		minSeverity: r.minSeverity,
+		classes: parseJsonList(r.classes),
+		siteIds: parseJsonList(r.siteIds),
+		quietStart: r.quietStart,
+		quietEnd: r.quietEnd,
+		digestMinutes: r.digestMinutes
 	}));
+}
+
+function parseJsonList(raw: string | null): string[] {
+	if (!raw) return [];
+	try {
+		const v = JSON.parse(raw);
+		return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+	} catch {
+		return [];
+	}
 }
 
 /** Decrypt a channel's secrets — delivery paths only. */

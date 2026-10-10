@@ -1,7 +1,18 @@
 import { expect, type Page } from '@playwright/test';
+import { networkInterfaces } from 'node:os';
 
 export const authFile = 'e2e/.auth/user.json';
 export const e2eUser = { email: 'e2e-admin@example.com', password: 'e2e-admin-password' };
+
+/** First non-loopback IPv4 — the SSRF guard allows LAN destinations. */
+export function lanIp(): string {
+	for (const iface of Object.values(networkInterfaces())) {
+		for (const addr of iface ?? []) {
+			if (addr.family === 'IPv4' && !addr.internal) return addr.address;
+		}
+	}
+	throw new Error('no LAN IPv4 found for webhook test');
+}
 
 /**
  * Idempotent connect to the mock LAPI. Specs share `.e2e-data`, so this works

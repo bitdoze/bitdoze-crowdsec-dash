@@ -19,11 +19,14 @@ import { dispatchOutbox } from '#lib/server/notify/deliver.ts';
 import { recordEvent } from '#lib/server/notify/core.ts';
 import { runSiteChecks } from '#lib/server/protect/checks.ts';
 import { drainJobs, enqueue } from '#lib/server/jobs/queue.ts';
+import { checkDiskPressure, checkForUpdate, runRetention } from '#lib/server/ops.ts';
 import { cloudflareAccount, site, syncState } from '#lib/server/db/app.schema.ts';
 
 export const SYNC_INTERVAL_MS = 30_000;
 /** Automated protection checks re-run once an hour — cheap projection reads. */
 const CHECKS_EVERY_MS = 3_600_000;
+/** Retention cleanup + update check once a day. */
+const OPS_EVERY_MS = 86_400_000;
 /** Edge lists fully reconcile every 15 min; fresher syncs happen on change. */
 const EDGE_RECONCILE_MS = 15 * 60_000;
 /** Don't re-enqueue an edge sync fresher than this without new alerts. */
@@ -61,6 +64,8 @@ async function maybeEnqueueEdgeSync(freshAlerts: boolean) {
 let started = false;
 let running = false;
 let lastChecksAt = 0;
+let lastOpsAt = 0;
+let lastDiskAt = 0;
 
 async function previousError(source: 'alerts' | 'metrics'): Promise<string | null> {
 	const row = await db
@@ -112,6 +117,18 @@ async function tick() {
 		await drainJobs(db, `worker-${process.pid}`).catch((e) =>
 			console.error('job drain failed:', e)
 		);
+
+		// Disk pressure is checked hourly — local state only, no LAPI needed.
+		if (Date.now() - lastDiskAt >= CHECKS_EVERY_MS) {
+			lastDiskAt = Date.now();
+			await checkDiskPressure(db).catch((e) => console.error('disk check failed:', e));
+		}
+		// Retention + release check once a day; failures are non-fatal.
+		if (Date.now() - lastOpsAt >= OPS_EVERY_MS) {
+			lastOpsAt = Date.now();
+			await runRetention(db).catch((e) => console.error('retention failed:', e));
+			await checkForUpdate(db).catch((e) => console.error('update check failed:', e));
+		}
 
 		const serverRow = await getServer(db);
 		if (!serverRow.connected) return;

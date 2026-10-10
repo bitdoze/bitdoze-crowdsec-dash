@@ -1,7 +1,6 @@
 import { expect, test } from '@playwright/test';
-import { networkInterfaces } from 'node:os';
 import { createClient } from '@libsql/client';
-import { ensureConnected } from './helpers.ts';
+import { ensureConnected, lanIp } from './helpers.ts';
 
 /**
  * Phase 4 e2e: manual decisions via POST /v1/alerts, unban via
@@ -11,16 +10,6 @@ import { ensureConnected } from './helpers.ts';
  */
 
 test.describe.configure({ mode: 'serial' });
-
-/** First non-loopback IPv4 — the SSRF guard allows LAN destinations. */
-function lanIp(): string {
-	for (const iface of Object.values(networkInterfaces())) {
-		for (const addr of iface ?? []) {
-			if (addr.family === 'IPv4' && !addr.internal) return addr.address;
-		}
-	}
-	throw new Error('no LAN IPv4 found for webhook test');
-}
 
 test('connected for the phase-4 flows', async ({ page, request }) => {
 	await ensureConnected(page);

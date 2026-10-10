@@ -28,6 +28,8 @@ export interface NotifyInput {
 	title: string;
 	body?: string;
 	href?: string;
+	/** Site id when the event is site-scoped; omit for system-wide events. */
+	site?: string;
 }
 
 /** Record an event into the inbox and fan out to channels on first occurrence. */
@@ -63,26 +65,45 @@ export async function recordEvent(database: typeof db, input: NotifyInput): Prom
 		title: input.title,
 		body: input.body ?? null,
 		href: input.href ?? null,
+		site: input.site ?? null,
 		count: 1,
 		createdAt: now,
 		lastAt: now
 	});
-	await enqueueOutbox(database, id, input.severity);
+	await enqueueOutbox(database, id, input);
 	return id;
 }
 
-/** One outbox row per enabled channel whose severity filter passes. */
-async function enqueueOutbox(
-	database: typeof db,
-	notificationId: string,
-	severity: NotifySeverity
-) {
+export function parseJsonArray(raw: string | null): string[] {
+	if (!raw) return [];
+	try {
+		const v = JSON.parse(raw);
+		return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * One outbox row per enabled channel whose rules pass: min severity,
+ * class allowlist, site allowlist. Site-less (system) events pass every
+ * site filter — they are not attributable to a single site.
+ */
+async function enqueueOutbox(database: typeof db, notificationId: string, input: NotifyInput) {
 	const channels = await database
 		.select()
 		.from(notificationChannel)
 		.where(eq(notificationChannel.enabled, true));
 	const rows = channels
-		.filter((c) => SEVERITY_ORDER[severity] >= SEVERITY_ORDER[c.minSeverity as NotifySeverity])
+		.filter((c) => {
+			if (SEVERITY_ORDER[input.severity] < SEVERITY_ORDER[c.minSeverity as NotifySeverity])
+				return false;
+			const classes = parseJsonArray(c.classes);
+			if (classes.length && !classes.includes(input.class)) return false;
+			const siteIds = parseJsonArray(c.siteIds);
+			if (siteIds.length && input.site && !siteIds.includes(input.site)) return false;
+			return true;
+		})
 		.map((c) => ({
 			id: crypto.randomUUID(),
 			notificationId,

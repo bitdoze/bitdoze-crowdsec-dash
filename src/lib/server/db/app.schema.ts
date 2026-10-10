@@ -339,6 +339,8 @@ export const notification = sqliteTable(
 		title: text('title').notNull(),
 		body: text('body'),
 		href: text('href'),
+		/** Site id when the event is site-scoped; null = system-wide. */
+		site: text('site'),
 		count: integer('count').default(1).notNull(),
 		readAt: integer('read_at', { mode: 'timestamp_ms' }),
 		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
@@ -366,6 +368,15 @@ export const notificationChannel = sqliteTable('notification_channel', {
 	minSeverity: text('min_severity', { enum: ['info', 'warning', 'critical'] })
 		.default('info')
 		.notNull(),
+	/** JSON array of NotifyClass values to deliver; null = all classes. */
+	classes: text('classes'),
+	/** JSON array of site ids to deliver; null = all. Site-less (system) events always pass. */
+	siteIds: text('site_ids'),
+	/** Quiet hours in UTC (HH:MM). Both set = active window; critical events bypass. */
+	quietStart: text('quiet_start'),
+	quietEnd: text('quiet_end'),
+	/** >0 = batch deliveries into one digest every N minutes. */
+	digestMinutes: integer('digest_minutes').default(0).notNull(),
 	createdAt: integer('created_at', { mode: 'timestamp_ms' })
 		.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
 		.notNull()
@@ -557,3 +568,10 @@ export const cloudflareZone = sqliteTable(
 	},
 	(table) => [index('cfZone_account_idx').on(table.accountId)]
 );
+
+/** Durable key/value app settings — retention policy, update-check cache. */
+export const appSetting = sqliteTable('app_setting', {
+	key: text('key').primaryKey(),
+	value: text('value').notNull(),
+	updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull()
+});

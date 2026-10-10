@@ -13,14 +13,19 @@ import {
 	type ChannelInput,
 	type ChannelType
 } from '#lib/server/notify/channels.ts';
-import { dispatchOutbox, retryOutboxRow } from '#lib/server/notify/deliver.ts';
+import { dispatchOutbox, previewDelivery, retryOutboxRow } from '#lib/server/notify/deliver.ts';
 import { recordEvent } from '#lib/server/notify/core.ts';
+import { site } from '#lib/server/db/app.schema.ts';
 import { requirePermission } from '#lib/server/roles.ts';
 import { recordAudit } from '#lib/server/audit.ts';
 
 export const load: PageServerLoad = async (event) => {
 	requirePermission(event, 'configure');
 	const channels = await listChannels(db);
+	const sites = await db
+		.select({ id: site.id, hostname: site.hostname })
+		.from(site)
+		.orderBy(site.hostname);
 	const pending = await db
 		.select({ n: sql<number>`count(*)` })
 		.from(notificationOutbox)
@@ -31,10 +36,13 @@ export const load: PageServerLoad = async (event) => {
 		.from(notificationOutbox)
 		.where(eq(notificationOutbox.state, 'failed'))
 		.get();
+	const editId = event.url.searchParams.get('edit');
 	return {
 		channels,
+		sites,
 		fields: CHANNEL_FIELDS,
 		types: CHANNEL_TYPES,
+		edit: editId ? (channels.find((c) => c.id === editId) ?? null) : null,
 		outbox: { pending: pending?.n ?? 0, failed: failed?.n ?? 0 }
 	};
 };
@@ -48,6 +56,15 @@ function readChannelInput(formData: FormData, type: ChannelType): ChannelInput {
 	for (const f of spec.config) config[f.key] = text(formData, `cfg_${f.key}`);
 	for (const f of spec.secrets) secrets[f.key] = text(formData, `sec_${f.key}`);
 	const minSeverity = text(formData, 'minSeverity');
+	const classes = formData
+		.getAll('classes')
+		.map((v) => v.toString())
+		.filter((v) => ['outage', 'security', 'admin', 'job'].includes(v));
+	const siteIds = formData
+		.getAll('siteIds')
+		.map((v) => v.toString())
+		.filter(Boolean);
+	const digestMinutes = Math.max(0, Number(text(formData, 'digestMinutes')) || 0);
 	return {
 		name: text(formData, 'name'),
 		type,
@@ -55,7 +72,12 @@ function readChannelInput(formData: FormData, type: ChannelType): ChannelInput {
 		secrets,
 		enabled: formData.get('enabled') === 'on',
 		minSeverity:
-			minSeverity === 'warning' || minSeverity === 'critical' ? minSeverity : ('info' as const)
+			minSeverity === 'warning' || minSeverity === 'critical' ? minSeverity : ('info' as const),
+		classes,
+		siteIds,
+		quietStart: text(formData, 'quietStart'),
+		quietEnd: text(formData, 'quietEnd'),
+		digestMinutes
 	};
 }
 
@@ -123,6 +145,26 @@ export const actions: Actions = {
 			.get();
 		if (row?.state === 'delivered') return { notice: `Test delivered to "${channel.name}".` };
 		return fail(400, { message: `Test failed: ${row?.lastError ?? 'delivery not attempted'}` });
+	},
+
+	/** Redacted render of what a delivery looks like — no network call. */
+	preview: async (event) => {
+		requirePermission(event, 'configure');
+		const channelId = text(await event.request.formData(), 'id');
+		const channel = await db
+			.select()
+			.from(notificationChannel)
+			.where(eq(notificationChannel.id, channelId))
+			.get();
+		if (!channel) return fail(404, { message: 'Channel not found.' });
+		try {
+			const preview = await previewDelivery(channel);
+			return { notice: `Preview for "${channel.name}"`, preview };
+		} catch (e) {
+			return fail(400, {
+				message: `Preview failed: ${e instanceof Error ? e.message : String(e)}`
+			});
+		}
 	},
 
 	retryFailed: async (event) => {

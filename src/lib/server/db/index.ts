@@ -19,6 +19,8 @@ if (config.databaseUrl.startsWith('file:')) {
 const client = createClient({ url: config.databaseUrl });
 
 export const db = drizzle(client, { schema });
+/** Raw libSQL client — needed for statements drizzle can't express (VACUUM INTO). */
+export const rawClient = client;
 
 export async function migrateDatabase(): Promise<void> {
 	await client.executeMultiple(`

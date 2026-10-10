@@ -185,6 +185,14 @@ Verified: `check` 0/0, `npm test` 190, build, `e2e/edge.spec.ts` green incl. CF-
 
 **Partially real-validated** (owner's `CLOUDFLARE_API_TOKEN` wrangler deploy token against their 23-zone account): token verify, zone discovery + plan detection at scale (23 zones, Free vs Pro correct), and the denied-permission path — `GET /accounts/{id}/rules/lists` and the zone custom-rules entrypoint both return CF code 10000, surfaced honestly as TOKEN ERROR + persisted `lastError`, account stays connected, zero writes reached the real account. Remaining gap is a token scoped `Zone:Read` + `Account:Account Filter Lists:Edit` + `Zone:Zone WAF:Edit` on a test zone to run list create → rule → sync → propagation → uninstall for real.
 
+## Phase 11 (notifications + operations) — done, on `main`
+
+- **Notification rules (migration 0009):** `notification.site`, `notification_channel.classes`/`site_ids`/`quiet_start`/`quiet_end`/`digest_minutes`, `app_setting` KV table. Enqueue filters severity → class allowlist → site allowlist (site-less system events pass site filters). Quiet hours (`HH:MM` UTC, may wrap midnight) defer non-critical rows to window end; digests batch pending rows into one send at the interval or a 25-item flood cap, and never sweep quiet-deferred or backing-off rows.
+- **Channel UX:** per-row Preview (renders the real outbound payload — destination, headers, body — with every secret value stripped), Send test through the real outbox pipeline, `?edit=` edit form (type locked, blank secrets keep stored values), per-row + bulk failed-delivery retry.
+- **Inbox:** 14-day event + failed-delivery `ActivityChart` trends, site hostname in row metadata.
+- **Operations on `/system` (`ops.ts`):** component versions (app/Node/CrowdSec/agent), GitHub latest-release check cached in `app_setting` (daily by the worker + manual button; errors displayed, upgrade stays manual), `statfs` disk panel + hourly pressure events (warn <15 %, critical <5 %, dedupe + escalation + recovery), retention policy per data class (daily + manual run, last-run stamp), `VACUUM INTO` backup download (`configure`-gated, audited, keeps 10), redacted support-bundle JSON download, `npm run backup`/`restore` CLI (restore keeps `app.db.restore-bak`).
+- **Verified:** backup→restore round-trip on real files; 10 ops + expanded notify unit tests; `e2e/ops.spec.ts` covers rules/preview/edit, ops module + both downloads, trend charts.
+
 ## Actions only the owner can take
 
 1. GitHub → Settings → Actions → General → enable **"Allow GitHub Actions to create and approve pull requests"**. Release-please fails without it (latest Release run: "GitHub Actions is not permitted to create or approve pull requests").
@@ -198,11 +206,11 @@ Verified: `check` 0/0, `npm test` 190, build, `e2e/edge.spec.ts` green incl. CF-
 
 - All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
 
-### 2. Real-host validation for phases 7–10, then Phase 11 (v0.9.0): notifications & operational tools
+### 2. Real-host validation for phases 7–10, then Phase 12 (v1.0.0-rc): verification matrix
 
-Phases 7–10 are on `main` with stub-driven e2e; real validation needs a Docker host with the agent (`AGENT_DOCKER=1`, `AGENT_SERVICES` including the proxy targets) — deploy the demo compose, run adopt→apply→validate→reload per proxy, exercise bypass/recreation/failure paths, walk a site through WAF levels 3→4 against real CRS alerts — plus a Cloudflare account with a test zone for the real edge lifecycle (token revocation, quota, propagation delay, adopt-existing-list). Phase 11 completes notifications and operational tooling (digests, retries, backup/restore, update workflow).
+Phases 7–11 are on `main` with stub-driven e2e; real validation needs a Docker host with the agent (`AGENT_DOCKER=1`, `AGENT_SERVICES` including the proxy targets) — deploy the demo compose, run adopt→apply→validate→reload per proxy, exercise bypass/recreation/failure paths, walk a site through WAF levels 3→4 against real CRS alerts — plus a Cloudflare account with a test zone for the real edge lifecycle (token revocation, quota, propagation delay, adopt-existing-list). Phase 12 is the cross-component acceptance matrix: outage/failure drills, restart-survival proof, benchmarks against the documented fixtures, amd64/arm64 image smokes, and release-candidate prep.
 
-Later phases (11–13) are fully described in the spec.
+Later phases (12–13) are fully described in the spec.
 
 ## Gotchas already learned
 

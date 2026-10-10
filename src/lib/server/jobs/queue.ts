@@ -218,7 +218,8 @@ export async function runClaimed(database: Database, j: JobRow): Promise<void> {
 				severity: state === 'rollback_failed' ? 'critical' : 'warning',
 				title: `Job ${j.kind} ${state === 'rollback_failed' ? 'failed and rollback failed' : 'failed'}`,
 				body: result.slice(0, 500),
-				href: '/system'
+				href: '/system',
+				site: j.siteId ?? undefined
 			}).catch(() => undefined);
 		}
 	};

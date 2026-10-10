@@ -143,13 +143,15 @@ export async function recordAudit({
 		});
 		const n = NOTIFY_ACTIONS[action];
 		if (n) {
+			const site = typeof detail?.siteId === 'string' ? detail.siteId : undefined;
 			await recordEvent(db, {
 				eventKey: `admin.${action}.${crypto.randomUUID()}`,
 				class: 'admin',
 				severity: n.severity,
 				title: n.title,
 				body: describe(detail, n.fields),
-				href: n.href
+				href: n.href,
+				site
 			});
 		}
 	} catch (e) {

@@ -4,6 +4,8 @@
 	import Pager from '#lib/components/Pager.svelte';
 	import Button from '#lib/components/Button.svelte';
 	import Stamp from '#lib/components/Stamp.svelte';
+	import ActivityChart from '#lib/components/ActivityChart.svelte';
+	import { dayLabel } from '#lib/activity.ts';
 
 	let { data }: PageProps = $props();
 	const fmt = (d: Date) => new Date(d).toLocaleString();
@@ -58,6 +60,19 @@
 		</form>
 	</div>
 
+	<Module title="Delivery trend — 14 days">
+		<div class="grid gap-4 md:grid-cols-2">
+			<div>
+				<p class="mb-1 text-xs text-ink-3">Events per day</p>
+				<ActivityChart data={data.eventTrend} xLabel={dayLabel} tickStride={3} />
+			</div>
+			<div>
+				<p class="mb-1 text-xs text-ink-3">Failed deliveries per day</p>
+				<ActivityChart data={data.failedTrend} xLabel={dayLabel} tickStride={3} />
+			</div>
+		</div>
+	</Module>
+
 	<div class="border border-rule bg-sheet">
 		{#each data.list.rows as n (n.id)}
 			{@const del = data.deliveries[n.id]}
@@ -77,7 +92,7 @@
 						<p class="mt-0.5 line-clamp-2 text-xs text-ink-3">{n.body}</p>
 					{/if}
 					<p class="mt-1 text-xs text-ink-3">
-						{n.class} · {fmt(n.lastAt)}
+						{n.class}{n.site ? ` · ${data.siteNames[n.site] ?? n.site}` : ''} · {fmt(n.lastAt)}
 						{#if del}
 							· delivered: {del.delivered ?? 0} · pending: {del.pending ?? 0} · failed: {del.failed ??
 								0}
