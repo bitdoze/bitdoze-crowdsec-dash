@@ -106,9 +106,9 @@ Legend: ✅ verified · ⚠️ partially · ⛔ not yet (needs-env)
 
 ## Environment-limited (do not claim)
 
-| Capability                                    | Status                                            |
-| --------------------------------------------- | ------------------------------------------------- |
-| Real Traefik/Nginx/Caddy host lifecycle       | ⛔ e2e uses mock binaries; real-host pass pending |
-| arm64 image **runtime**                       | ⛔ no QEMU on this host (build-only smoke done)   |
-| Full real CF lifecycle                        | ⛔ token scope gap (see above)                    |
-| Production-scale (>10k decisions, >100 sites) | ⛔ bench fixture scale only — see benchmarks.md   |
+| Capability                                    | Status                                                                                |
+| --------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Real Traefik/Nginx/Caddy host lifecycle       | ⛔ e2e uses mock binaries; real-host pass pending                                     |
+| arm64 image **runtime**                       | ✅ boot/healthz/setup verified under QEMU binfmt; not tested on native arm64 hardware |
+| Full real CF lifecycle                        | ⛔ token scope gap (see above)                                                        |
+| Production-scale (>10k decisions, >100 sites) | ⛔ bench fixture scale only — see benchmarks.md                                       |

@@ -40,10 +40,13 @@ test('connects to the mock LAPI and syncs the projection', async ({ page }) => {
 	await expect(page.getByRole('status').first()).toContainText(/Sync complete|Connected/);
 	await expect(page.getByText('In sync')).toBeVisible({ timeout: 15_000 });
 	// ≥2 alerts, ≥1 active decision — pushed manual decisions persist in
-	// .e2e-data across runs, so the counts only ever drift upward.
-	await expect(
-		page.getByRole('cell', { name: /[2-9]\d* alerts · [1-9]\d* active decisions/ })
-	).toBeVisible();
+	// .e2e-data across runs, so the counts only ever drift upward. Parse the
+	// counts rather than matching digits: a regex like /[2-9]\d*/ misses
+	// counts whose digits are all 0/1 (e.g. "111 alerts").
+	const countsCell = page.getByRole('cell', { name: /\d+ alerts · \d+ active decisions/ });
+	await expect(countsCell).toBeVisible();
+	const m = /(\d+) alerts · (\d+) active decisions/.exec((await countsCell.textContent()) ?? '');
+	expect(m && Number(m[1]) >= 2 && Number(m[2]) >= 1).toBe(true);
 
 	// Capability tiers: watcher + metrics + observer verified; AppSec has no samples.
 	await expect(page.getByRole('cell', { name: 'Watcher sync' })).toBeVisible();
