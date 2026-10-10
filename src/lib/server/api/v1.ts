@@ -10,7 +10,8 @@
  */
 import { desc, eq, sql } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.ts';
-import { alert, notification, site, syncState } from '#lib/server/db/app.schema.ts';
+import { alert, decision, notification, site, syncState } from '#lib/server/db/app.schema.ts';
+import { recordAudit } from '#lib/server/audit.ts';
 import { listAlerts, listDecisions, ipDetail } from '#lib/server/crowdsec/lists.ts';
 import { getServer, buildClient } from '#lib/server/crowdsec/connection.ts';
 import { requestDecision, requestRemoval } from '#lib/server/crowdsec/decisions.ts';
@@ -33,7 +34,7 @@ export const need = (p: ApiPrincipal, scope: ApiScope) => {
 };
 
 const int = (v: unknown, lo: number, hi: number, fallback: number): number => {
-	const n = typeof v === 'string' ? parseInt(v, 10) : typeof v === 'number' ? v : NaN;
+	const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : typeof v === 'number' ? v : NaN;
 	return Number.isInteger(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
 };
 
@@ -60,17 +61,15 @@ export async function status(database: typeof db) {
 
 export async function alerts(database: typeof db, _p: ApiPrincipal, q: URLSearchParams) {
 	const sinceHours = q.get('sinceHours');
-	const res = await listAlerts(database, {
+	return listAlerts(database, {
 		siteId: q.get('siteId') ?? undefined,
 		scenario: q.get('scenario') ?? undefined,
 		ip: q.get('ip') ?? undefined,
-		page: int(q.get('page'), 1, 100_000, 1)
+		page: int(q.get('page'), 1, 100_000, 1),
+		since: sinceHours
+			? new Date(Date.now() - int(sinceHours, 1, 24 * 365, 24) * 3_600_000)
+			: undefined
 	});
-	if (sinceHours) {
-		const cutoff = Date.now() - int(sinceHours, 1, 24 * 365, 24) * 3_600_000;
-		res.rows = res.rows.filter((r) => (r.startedAt?.getTime() ?? 0) >= cutoff);
-	}
-	return res;
 }
 
 export async function alertById(database: typeof db, _p: ApiPrincipal, id: string) {
@@ -99,7 +98,8 @@ export async function decisions(database: typeof db, _p: ApiPrincipal, q: URLSea
 export async function createDecision(
 	database: typeof db,
 	p: ApiPrincipal,
-	body: Record<string, unknown>
+	body: Record<string, unknown>,
+	via = 'api'
 ) {
 	need(p, 'operate');
 	const action = String(body.action ?? 'ban');
@@ -120,24 +120,46 @@ export async function createDecision(
 		userId: p.userId
 	});
 	if (!res.ok) throw new ApiError(502, `Upstream rejected the decision: ${res.error}`);
+	await recordAudit({
+		actor: p.userId,
+		action: 'decision.create',
+		detail: { scope: target.scope, value: target.value, type: action, durationS, via }
+	});
 	return { state: 'requested', ...target, type: action, durationS };
 }
 
-/** DELETE /api/v1/decisions {id, value} — request removal of an active decision. */
+/**
+ * DELETE /api/v1/decisions {id, value?} — request removal of an active
+ * decision. The projection row is authoritative for `value` — a caller that
+ * passes a mismatched value can't wedge the 'removing' reconciliation row.
+ */
 export async function removeDecision(
 	database: typeof db,
 	p: ApiPrincipal,
-	body: Record<string, unknown>
+	body: Record<string, unknown>,
+	via = 'api'
 ) {
 	need(p, 'operate');
 	const upstreamId = Number(body.id ?? body.upstreamId);
-	const value = String(body.value ?? '');
-	if (!Number.isInteger(upstreamId) || !value)
-		throw new ApiError(400, 'Provide the decision id and value.');
+	if (!Number.isInteger(upstreamId) || upstreamId <= 0)
+		throw new ApiError(400, 'Provide the decision id.');
+	const existing = await database
+		.select({ value: decision.value })
+		.from(decision)
+		.where(eq(decision.upstreamId, upstreamId))
+		.get();
+	const value = existing?.value ?? String(body.value ?? '');
+	if (!value)
+		throw new ApiError(404, 'Decision not in the local projection; pass its value explicitly.');
 	const client = await buildClient(database);
 	if (!client) throw new ApiError(409, 'Not connected to a LAPI.');
 	const res = await requestRemoval(database, client, upstreamId, value, p.userId);
 	if (!res.ok) throw new ApiError(502, `Unban failed: ${res.error}`);
+	await recordAudit({
+		actor: p.userId,
+		action: 'decision.remove',
+		detail: { upstreamId, value, via }
+	});
 	return { state: 'removal-requested', id: upstreamId, value };
 }
 
@@ -179,13 +201,15 @@ export async function notifications(database: typeof db, _p: ApiPrincipal, q: UR
 			severity: notification.severity,
 			title: notification.title,
 			body: notification.body,
-			site: notification.site,
+			siteId: notification.site,
+			siteHostname: site.hostname,
 			count: notification.count,
 			unread: sql<number>`case when ${notification.readAt} is null then 1 else 0 end`,
 			createdAt: notification.createdAt,
 			updatedAt: notification.lastAt
 		})
 		.from(notification)
+		.leftJoin(site, eq(notification.site, site.id))
 		.orderBy(desc(notification.lastAt))
 		.limit(limit);
 	return rows;

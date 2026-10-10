@@ -4,7 +4,7 @@
  * limiter is honest (it resets on restart and is documented as such).
  */
 import type { RequestEvent } from '@sveltejs/kit';
-import { authenticateApiKey, type ApiPrincipal, type ApiScope } from '#lib/server/api-keys.ts';
+import { authenticateApiKey, type ApiPrincipal } from '#lib/server/api-keys.ts';
 import { ApiError } from './v1.ts';
 import { db } from '#lib/server/db/index.ts';
 
@@ -45,7 +45,9 @@ export async function apiAuth(
 	}
 	const principal = await authenticateApiKey(db, raw);
 	if (!principal) {
-		rateLimited(`anon:${ip}`, LIMIT_ANON);
+		// Failed-key attempts share the anonymous bucket so a scanner probing
+		// keyspace eventually gets 429 instead of unlimited 401s.
+		if (rateLimited(`anon:${ip}`, LIMIT_ANON)) return { response: jsonErr(429, 'Rate limited.') };
 		return { response: jsonErr(401, 'Invalid or revoked API key.') };
 	}
 	if (rateLimited(`key:${principal.keyId}`, LIMIT_AUTHED))
@@ -53,16 +55,16 @@ export async function apiAuth(
 	return { principal };
 }
 
-export function requireScope(p: ApiPrincipal, scope: ApiScope): Response | null {
-	if (scope === 'operate' && p.scope !== 'operate')
-		return jsonErr(403, 'This key has read scope; this operation needs an operate-scope key.');
-	return null;
+/** Reject oversized JSON bodies before parsing (advisory content-length cap). */
+export function bodyTooBig(event: RequestEvent, maxBytes = 256 * 1024): Response | null {
+	const len = Number(event.request.headers.get('content-length') ?? 0);
+	return len > maxBytes ? jsonErr(413, 'Request body too large.') : null;
 }
 
-/** Wrap an op call: uniform ApiError → JSON mapping. */
+/** Wrap an op call: uniform ApiError → JSON mapping, never cacheable. */
 export async function respond(fn: () => Promise<unknown>): Promise<Response> {
 	try {
-		return Response.json(await fn());
+		return Response.json(await fn(), { headers: { 'cache-control': 'no-store' } });
 	} catch (e) {
 		if (e instanceof ApiError) return jsonErr(e.status, e.message);
 		throw e;

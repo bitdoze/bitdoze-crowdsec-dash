@@ -27,21 +27,23 @@ document (endpoints, scopes, MCP pointer).
 
 ## REST endpoints
 
-| Endpoint                          | Notes                                                                |
-| --------------------------------- | -------------------------------------------------------------------- |
-| `GET /api/v1/status`              | version, LAPI connectivity, per-source sync freshness                |
-| `GET /api/v1/alerts`              | `?siteId` `?scenario` `?ip` `?sinceHours` `?page`                    |
-| `GET /api/v1/alerts/:id`          | one alert by upstream id                                             |
-| `GET /api/v1/decisions`           | `?q` `?includeExpired` `?page`                                       |
-| `POST /api/v1/decisions`          | `{action:"ban"\|"captcha", ip\|cidr, duration, reason?}` — `operate` |
-| `DELETE /api/v1/decisions`        | `{id, value}` — request removal — `operate`                          |
-| `GET /api/v1/sites` / `sites/:id` | inventory                                                            |
-| `GET /api/v1/lookup/:ip`          | alerts + decisions + geo for one address                             |
-| `GET /api/v1/notifications`       | `?limit` inbox rows                                                  |
+| Endpoint                          | Notes                                                                     |
+| --------------------------------- | ------------------------------------------------------------------------- |
+| `GET /api/v1/status`              | version, LAPI connectivity, per-source sync freshness                     |
+| `GET /api/v1/alerts`              | `?siteId` `?scenario` `?ip` `?sinceHours` `?page`                         |
+| `GET /api/v1/alerts/:id`          | one alert by upstream id                                                  |
+| `GET /api/v1/decisions`           | `?q` `?includeExpired` `?page`                                            |
+| `POST /api/v1/decisions`          | `{action:"ban"\|"captcha", ip\|cidr, duration, reason?}` — `operate`      |
+| `DELETE /api/v1/decisions`        | `{id}` — request removal (value resolved from the projection) — `operate` |
+| `GET /api/v1/sites` / `sites/:id` | inventory                                                                 |
+| `GET /api/v1/lookup/:ip`          | alerts + decisions + geo for one address                                  |
+| `GET /api/v1/notifications`       | `?limit` inbox rows                                                       |
 
 Decision writes go through the same `decision_request` → LAPI → reconcile
 pipeline as the UI — a `200` means _requested_, not _enforced_; the decision
-appears in the projection on the next sync.
+appears in the projection on the next sync. API-originated mutations land in
+the audit log (`via: "api"` or `"mcp"`) and fan out to the notification inbox
+exactly like UI-initiated ones.
 
 Errors are `{"error": "…"}` with 400/401/403/404/409/429/502 as appropriate.
 

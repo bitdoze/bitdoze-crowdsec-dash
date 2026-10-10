@@ -52,8 +52,9 @@ test('api keys: mint → REST → MCP → scope enforcement → revoke', async (
 	const sitesRes = await api('/api/v1/sites', key);
 	expect(sitesRes.status).toBe(200);
 
-	// operate-scope write against the mock LAPI (ban a throwaway IP)
-	const banIp = `198.51.100.${Math.floor(Math.random() * 200) + 50}`;
+	// operate-scope write against the mock LAPI (ban a throwaway IP — kept out
+	// of 198.51.100.x and 203.0.113.x which other specs assert on by name)
+	const banIp = `192.0.2.${Math.floor(Math.random() * 200) + 50}`;
 	const ban = await api('/api/v1/decisions', key, {
 		method: 'POST',
 		body: JSON.stringify({ action: 'ban', ip: banIp, duration: '10m', reason: 'e2e api' })

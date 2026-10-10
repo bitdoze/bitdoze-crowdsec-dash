@@ -3,7 +3,7 @@
  * alerts, decisions, and IP detail pages. Everything here reads the local
  * projection; nothing hits the LAPI per request.
  */
-import { and, desc, eq, inArray, isNotNull, like, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, like, or, sql } from 'drizzle-orm';
 import type { db } from '#lib/server/db/index.ts';
 import { alert, alertSite, decision, site, syncState } from '#lib/server/db/app.schema.ts';
 
@@ -47,7 +47,7 @@ export async function projectionFreshness(database: Db) {
 
 export async function listAlerts(
 	database: Db,
-	opts: { siteId?: string; scenario?: string; ip?: string; page?: number } = {}
+	opts: { siteId?: string; scenario?: string; ip?: string; page?: number; since?: Date } = {}
 ): Promise<ListResult<AlertRow>> {
 	const page = Math.max(1, opts.page ?? 1);
 	const where = and(
@@ -55,6 +55,7 @@ export async function listAlerts(
 			? or(like(alert.sourceIp, `%${opts.ip}%`), like(alert.sourceValue, `%${opts.ip}%`))
 			: undefined,
 		opts.scenario ? like(alert.scenario, `%${opts.scenario}%`) : undefined,
+		opts.since ? gte(alert.startedAt, opts.since) : undefined,
 		opts.siteId
 			? sql`EXISTS (SELECT 1 FROM alert_site WHERE alert_site.alert_upstream_id = ${alert.upstreamId} AND alert_site.site_id = ${opts.siteId})`
 			: undefined

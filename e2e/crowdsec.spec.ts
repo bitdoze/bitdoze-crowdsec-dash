@@ -79,9 +79,9 @@ test('decisions page shows active vs expired state', async ({ page }) => {
 	await page.goto('/decisions');
 	await expect(page.getByRole('link', { name: '203.0.113.7', exact: true })).toBeVisible();
 	// The ssh decision expired in the fixture — hidden unless requested.
-	await expect(page.getByRole('link', { name: '198.51.100.23' })).toBeHidden();
+	await expect(page.getByRole('link', { name: '198.51.100.23', exact: true })).toBeHidden();
 	await page.goto('/decisions?expired=1');
-	await expect(page.getByRole('link', { name: '198.51.100.23' })).toBeVisible();
+	await expect(page.getByRole('link', { name: '198.51.100.23', exact: true })).toBeVisible();
 });
 
 test('IP detail aggregates alerts and decisions for an address', async ({ page }) => {

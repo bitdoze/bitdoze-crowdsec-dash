@@ -6,10 +6,10 @@
  * scopes mirror REST — `operate` keys may ban/unban, everything else is read.
  *
  * Supported methods: initialize, ping, notifications/*, tools/list,
- * tools/call. `MCP-Protocol-Version` is echoed back negotiated.
+ * tools/call. The server answers with its own MCP-Protocol-Version.
  */
 import type { RequestHandler } from './$types';
-import { apiAuth, jsonErr } from '#lib/server/api/http.ts';
+import { apiAuth, bodyTooBig, jsonErr } from '#lib/server/api/http.ts';
 import {
 	ApiError,
 	alertById,
@@ -80,20 +80,23 @@ const TOOLS = [
 		'Push a ban or captcha decision for an IP/CIDR. Needs an operate-scope key; reconciles upstream on the next sync.',
 		{
 			ip: { type: 'string', description: 'IPv4/IPv6 or CIDR' },
-			duration: { type: 'string', description: 'e.g. 4h, 90m, 2d (max 30d)' },
+			duration: { type: 'string', description: 'e.g. 4h, 90m, 2d (max 30d, default 4h)' },
 			reason: { type: 'string' },
 			type: { type: 'string', enum: ['ban', 'captcha'] }
 		},
-		['ip', 'duration']
+		['ip']
 	),
 	tool(
 		'unban_ip',
-		'Request removal of an active decision. Needs an operate-scope key.',
+		'Request removal of an active decision by its id (from list_decisions). Needs an operate-scope key.',
 		{
 			id: { type: 'number' },
-			value: { type: 'string', description: 'The decision value (IP/CIDR)' }
+			value: {
+				type: 'string',
+				description: 'Decision value — only needed if not in the local projection'
+			}
 		},
-		['id', 'value']
+		['id']
 	)
 ];
 
@@ -122,14 +125,19 @@ async function callTool(p: ApiPrincipal, name: string, args: Record<string, unkn
 		case 'list_notifications':
 			return notifications(db, p, qs(args));
 		case 'ban_ip':
-			return createDecision(db, p, {
-				action: args.type ?? 'ban',
-				ip: args.ip,
-				duration: args.duration,
-				reason: args.reason
-			});
+			return createDecision(
+				db,
+				p,
+				{
+					action: args.type ?? 'ban',
+					ip: args.ip,
+					duration: args.duration,
+					reason: args.reason
+				},
+				'mcp'
+			);
 		case 'unban_ip':
-			return removeDecision(db, p, { id: args.id, value: args.value });
+			return removeDecision(db, p, { id: args.id, value: args.value }, 'mcp');
 		default:
 			throw new ApiError(400, `Unknown tool: ${name}`);
 	}
@@ -144,8 +152,7 @@ const rpcErr = (id: unknown, code: number, message: string) => ({
 
 async function handleRpc(
 	p: ApiPrincipal,
-	msg: { jsonrpc?: string; id?: unknown; method?: string; params?: Record<string, unknown> },
-	protocolVersion: string
+	msg: { jsonrpc?: string; id?: unknown; method?: string; params?: Record<string, unknown> }
 ): Promise<object | null> {
 	const { id, method } = msg;
 	// Notifications have no id — acknowledge with no response body content.
@@ -154,7 +161,7 @@ async function handleRpc(
 	switch (method) {
 		case 'initialize':
 			return ok(id, {
-				protocolVersion,
+				protocolVersion: PROTOCOL_VERSION,
 				capabilities: { tools: { listChanged: false } },
 				serverInfo: { name: 'bitdoze-crowdsec-dash', version: APP_VERSION },
 				instructions:
@@ -191,7 +198,8 @@ export const POST: RequestHandler = async (event) => {
 	const auth = await apiAuth(event);
 	if ('response' in auth) return auth.response;
 
-	const protocolVersion = event.request.headers.get('mcp-protocol-version') ?? PROTOCOL_VERSION;
+	const tooBig = bodyTooBig(event);
+	if (tooBig) return tooBig;
 	let body: unknown;
 	try {
 		body = await event.request.json();
@@ -203,13 +211,15 @@ export const POST: RequestHandler = async (event) => {
 	if (messages.some((m) => !m || typeof m !== 'object' || m.jsonrpc !== '2.0'))
 		return jsonErr(400, 'Every message must be JSON-RPC 2.0.');
 
-	const replies = (
-		await Promise.all(messages.map((m) => handleRpc(auth.principal, m, protocolVersion)))
-	).filter((r): r is object => r !== null);
+	const replies = (await Promise.all(messages.map((m) => handleRpc(auth.principal, m)))).filter(
+		(r): r is object => r !== null
+	);
 
 	if (replies.length === 0) return new Response(null, { status: 202 });
+	// We only speak PROTOCOL_VERSION — answer with it rather than echoing
+	// whatever version header the client sent.
 	return Response.json(Array.isArray(body) ? replies : replies[0], {
-		headers: { 'mcp-protocol-version': protocolVersion }
+		headers: { 'mcp-protocol-version': PROTOCOL_VERSION, 'cache-control': 'no-store' }
 	});
 };
 
