@@ -2,7 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { rateLimit } from '#lib/server/db/auth.schema.ts';
-import { clearLoginFailures, loginRetryAfter, recordLoginFailure } from '#lib/server/throttle.ts';
+import {
+	clearLoginFailures,
+	clearTwoFactorFailures,
+	loginRetryAfter,
+	recordLoginFailure,
+	recordTwoFactorFailure,
+	twoFactorRetryAfter
+} from '#lib/server/throttle.ts';
 
 function makeDb() {
 	const client = createClient({ url: ':memory:' });
@@ -68,5 +75,48 @@ describe('login throttle', () => {
 			lastRequest: Date.now()
 		});
 		expect(await loginRetryAfter(db, 'a@b.c', '1.2.3.4')).toBe(0);
+	});
+});
+
+describe('second-factor throttle', () => {
+	beforeEach(async (context) => {
+		const { db, client } = makeDb();
+		context.db = db;
+		await client.execute(
+			'CREATE TABLE rate_limit (id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, count INTEGER NOT NULL, last_request INTEGER NOT NULL)'
+		);
+	});
+
+	it('locks the IP after 10 failed second-factor attempts', async ({ db }) => {
+		expect(await twoFactorRetryAfter(db, '1.2.3.4')).toBe(0);
+		for (let i = 0; i < 9; i++) {
+			await recordTwoFactorFailure(db, '1.2.3.4');
+			expect(await twoFactorRetryAfter(db, '1.2.3.4')).toBe(0);
+		}
+		await recordTwoFactorFailure(db, '1.2.3.4');
+		expect(await twoFactorRetryAfter(db, '1.2.3.4')).toBeGreaterThan(0);
+		// Other IPs are unaffected.
+		expect(await twoFactorRetryAfter(db, '9.9.9.9')).toBe(0);
+	});
+
+	it('is independent of the email+IP login window', async ({ db }) => {
+		for (let i = 0; i < 10; i++) await recordTwoFactorFailure(db, '1.2.3.4');
+		expect(await twoFactorRetryAfter(db, '1.2.3.4')).toBeGreaterThan(0);
+		expect(await loginRetryAfter(db, 'a@b.c', '1.2.3.4')).toBe(0);
+		// …and a successful verification clears just the 2FA window.
+		await clearTwoFactorFailures(db, '1.2.3.4');
+		expect(await twoFactorRetryAfter(db, '1.2.3.4')).toBe(0);
+	});
+
+	it('expires after the window elapses', async ({ db }) => {
+		vi.useFakeTimers();
+		try {
+			for (let i = 0; i < 10; i++) await recordTwoFactorFailure(db, '1.2.3.4');
+			expect(await twoFactorRetryAfter(db, '1.2.3.4')).toBeGreaterThan(0);
+			vi.advanceTimersByTime(10 * 60 * 1000 + 1);
+			expect(await twoFactorRetryAfter(db, '1.2.3.4')).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

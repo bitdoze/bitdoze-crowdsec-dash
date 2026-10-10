@@ -15,7 +15,7 @@ const state = {
 			id: 'zone-a',
 			name: 'e2e-cf.example.com',
 			status: 'active',
-			plan: { name: 'Free Website' },
+			plan: { name: 'Enterprise Website' },
 			account: { id: ACCOUNT, name: 'E2E Account' }
 		},
 		{
@@ -102,8 +102,30 @@ const server = createServer(async (req, res) => {
 		});
 	}
 
-	// Zones
-	if (url.pathname === '/zones' && req.method === 'GET') return ok(res, state.zones);
+	// Zones — paginated with page/per_page and result_info.total_pages.
+	if (url.pathname === '/zones' && req.method === 'GET') {
+		const perPage = Number(url.searchParams.get('per_page') || 50);
+		const page = Math.max(1, Number(url.searchParams.get('page') || 1));
+		const totalPages = Math.max(1, Math.ceil(state.zones.length / perPage));
+		const slice = state.zones.slice((page - 1) * perPage, page * perPage);
+		res.writeHead(200, { 'Content-Type': 'application/json' });
+		res.end(
+			JSON.stringify({
+				success: true,
+				errors: [],
+				messages: [],
+				result: slice,
+				result_info: {
+					page,
+					per_page: perPage,
+					total_pages: totalPages,
+					count: slice.length,
+					total_count: state.zones.length
+				}
+			})
+		);
+		return;
+	}
 
 	// Zone custom-rules entrypoint
 	const rulesetMatch =
@@ -119,8 +141,14 @@ const server = createServer(async (req, res) => {
 		}
 		if (req.method === 'PUT') {
 			const body = JSON.parse((await readBody(req)) || '{}');
+			// `log` is an Enterprise-only action on custom rules.
+			const zone = state.zones.find((z) => z.id === zoneId);
+			const planName = zone?.plan?.name ?? '';
+			if ((body.rules ?? []).some((r) => r.action === 'log') && !/enterprise/i.test(planName)) {
+				return err(res, 20212, 400);
+			}
 			const rules = (body.rules ?? []).map((r) => ({
-				id: `rule-${state.nextId++}`,
+				id: r.id ?? `rule-${state.nextId++}`, // stable ids on update
 				enabled: true,
 				...r
 			}));
@@ -169,30 +197,39 @@ const server = createServer(async (req, res) => {
 			const list = state.lists.get(itemsMatch[1]);
 			if (!list) return err(res, 7003, 404);
 			if (req.method === 'GET') {
+				// per_page (≤500) + cursor → result_info.cursors.after
+				const perPage = Math.min(500, Number(url.searchParams.get('per_page') || 50));
+				const all = [...list.items.entries()].map(([ip, comment]) => ({ ip, comment }));
+				const start = Number(url.searchParams.get('cursor') || 0) || 0;
+				const slice = all.slice(start, start + perPage);
+				const after = start + slice.length < all.length ? String(start + slice.length) : undefined;
 				return res.writeHead(200, { 'Content-Type': 'application/json' }).end(
 					JSON.stringify({
 						success: true,
 						errors: [],
 						messages: [],
-						result: [...list.items.entries()].map(([ip, comment]) => ({ ip, comment })),
-						result_info: {}
+						result: slice,
+						result_info: { cursors: after ? { after } : {} }
 					})
 				);
 			}
 			if (req.method === 'PUT') {
-				const body = JSON.parse((await readBody(req)) || '{}');
-				for (const item of body.add ?? []) list.items.set(item.ip, item.comment ?? '');
-				for (const item of body.remove ?? []) list.items.delete(item.ip);
+				const body = JSON.parse((await readBody(req)) || 'null');
+				// Real contract: body is a JSON array that REPLACES all items.
+				if (!Array.isArray(body)) return err(res, 20204, 400);
+				list.items.clear();
+				for (const item of body) list.items.set(item.ip, item.comment ?? '');
 				const opId = `op-${state.nextId++}`;
 				state.ops.set(opId, 'completed');
 				return ok(res, { operation_id: opId });
 			}
 		}
-		const opMatch = /^([a-z0-9-]+)\/bulk_operations\/([a-z0-9-]+)$/.exec(tail);
+		// Bulk ops live at the account level — no list id in the path.
+		const opMatch = /^bulk_operations\/([a-z0-9-]+)$/.exec(tail);
 		if (opMatch && req.method === 'GET') {
-			const status = state.ops.get(opMatch[2]);
+			const status = state.ops.get(opMatch[1]);
 			if (!status) return err(res, 7003, 404);
-			return ok(res, { id: opMatch[2], status, completed: new Date().toISOString() });
+			return ok(res, { id: opMatch[1], status, completed: new Date().toISOString() });
 		}
 	}
 

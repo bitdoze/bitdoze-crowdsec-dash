@@ -5,6 +5,7 @@ import { CHECKS, protectionMatrix } from '#lib/server/protect/checks.ts';
 import { getServer } from '#lib/server/crowdsec/connection.ts';
 import { projectionFreshness } from '#lib/server/crowdsec/lists.ts';
 import { configArtifact, notificationChannel } from '#lib/server/db/app.schema.ts';
+import { requireUser } from '#lib/server/roles.ts';
 
 export type WizardTarget = 'users' | 'crowdsec' | 'sites' | 'site' | 'notifications';
 export type WizardStep = {
@@ -17,7 +18,8 @@ export type WizardStep = {
 	hint?: string;
 };
 
-export const load: PageServerLoad = async () => {
+export const load: PageServerLoad = async (event) => {
+	requireUser(event);
 	const [srv, freshness, matrix, plannedRows, channelRows] = await Promise.all([
 		getServer(db),
 		projectionFreshness(db),

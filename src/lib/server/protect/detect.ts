@@ -5,6 +5,7 @@
  * evidence so the answer is auditable, not authoritative.
  */
 import type { ProxyKind } from '#lib/server/protect/templates.ts';
+import { assertResolvesSafely } from '#lib/server/net-guard.ts';
 
 export type Detection = {
 	probedUrl: string;
@@ -76,6 +77,21 @@ export async function probeSite(hostname: string, url?: string): Promise<Detecti
 			proxy: 'unknown',
 			cloudflare: false,
 			error: 'Only http(s) URLs can be probed.'
+		};
+	}
+	try {
+		// Operators legitimately probe local proxies, so only link-local and
+		// unspecified destinations are refused — never the cloud metadata
+		// address via DNS rebinding.
+		await assertResolvesSafely(parsed.hostname, 'probe');
+	} catch (e) {
+		return {
+			probedUrl: target,
+			at: new Date().toISOString(),
+			headers: {},
+			proxy: 'unknown',
+			cloudflare: false,
+			error: e instanceof Error ? e.message.slice(0, 200) : 'Destination not allowed.'
 		};
 	}
 	try {

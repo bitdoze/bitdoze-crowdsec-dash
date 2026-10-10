@@ -3,7 +3,7 @@
  * cancels server work, a crashed worker's lease expires and the job is
  * reclaimed, and completed steps are not re-run on resume.
  */
-import { and, asc, desc, eq, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, lt, or, sql } from 'drizzle-orm';
 import type { db } from '#lib/server/db/index.ts';
 import { job, jobStep } from '#lib/server/db/app.schema.ts';
 import { RUNNERS, type JobContext } from '#lib/server/jobs/runners.ts';
@@ -132,6 +132,9 @@ export async function claimNext(database: Database, workerId: string): Promise<J
 				.where(eq(job.id, cand.id));
 			continue;
 		}
+		// Compare-and-set: the candidate's state (and, for a reclaimed
+		// running job, its still-expired lease) must not have moved since
+		// the SELECT — otherwise another worker already claimed it.
 		const [claimed] = await database
 			.update(job)
 			.set({
@@ -142,7 +145,13 @@ export async function claimNext(database: Database, workerId: string): Promise<J
 				startedAt: cand.startedAt ?? now,
 				updatedAt: now
 			})
-			.where(and(eq(job.id, cand.id), ne(job.state, 'cancelled')))
+			.where(
+				and(
+					eq(job.id, cand.id),
+					eq(job.state, cand.state),
+					...(cand.state === 'running' ? [lt(job.leaseUntil, now)] : [])
+				)
+			)
 			.returning();
 		if (claimed) return claimed;
 	}
@@ -236,6 +245,19 @@ export async function runClaimed(database: Database, j: JobRow): Promise<void> {
 	const done = new Set(prior.filter((s) => s.state === 'succeeded').map((s) => s.idx));
 	const ctx: JobContext = { database, job: j, secrets: {} };
 
+	// A step may legitimately run longer than the lease — keep renewing it
+	// for the step's duration so a slow op isn't reclaimed mid-run.
+	const withHeartbeat = async <T>(fn: () => Promise<T>): Promise<T> => {
+		const hb = setInterval(() => {
+			void heartbeat(database, j.id).catch(() => {});
+		}, LEASE_MS / 3);
+		try {
+			return await fn();
+		} finally {
+			clearInterval(hb);
+		}
+	};
+
 	for (const [i, step] of steps.entries()) {
 		// Secret-producing steps re-run even when already succeeded — their
 		// result lives only in memory and is lost on worker restart.
@@ -244,7 +266,7 @@ export async function runClaimed(database: Database, j: JobRow): Promise<void> {
 		await writeStep(database, j.id, i, step.name, 'running');
 		await heartbeat(database, j.id);
 		try {
-			const out = await step.run(ctx);
+			const out = await withHeartbeat(() => step.run(ctx));
 			await writeStep(
 				database,
 				j.id,
@@ -270,7 +292,7 @@ export async function runClaimed(database: Database, j: JobRow): Promise<void> {
 				await writeStep(database, j.id, ridx, `rollback: ${rstep.name}`, 'running');
 				await heartbeat(database, j.id);
 				try {
-					const out = await rstep.run(ctx);
+					const out = await withHeartbeat(() => rstep.run(ctx));
 					await writeStep(
 						database,
 						j.id,
@@ -311,7 +333,9 @@ export async function requestCancel(database: Database, jobId: string): Promise<
 			.where(eq(job.id, jobId));
 		return true;
 	}
-	if (j.state === 'running' || j.state === 'rollback_running') {
+	// A rollback must finish — cancelling it leaves the host half-restored.
+	if (j.state === 'rollback_running') return false;
+	if (j.state === 'running') {
 		await database
 			.update(job)
 			.set({ state: 'cancel_requested', updatedAt: new Date() })

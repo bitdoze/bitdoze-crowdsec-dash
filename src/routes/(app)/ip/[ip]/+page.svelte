@@ -44,26 +44,14 @@
 							</span>
 						</form>
 						{#if form?.allowlist && form.allowlist.ip === data.ip}
-							{@const lists = form.allowlist.raw?.allowlists}
 							<div class="mt-3 border-t border-rule pt-3">
-								{#if Array.isArray(lists) && lists.length}
+								{#if form.allowlist.allowlisted}
 									<p class="text-sm text-ink-2">
-										Covered by {lists.length} centralized allowlist{lists.length === 1 ? '' : 's'}:
+										Covered by a centralized allowlist{#if form.allowlist.reason}
+											— {form.allowlist.reason}{/if}.
 									</p>
-									<ul class="mt-1 space-y-1 text-sm text-ink-2">
-										{#each lists as l, i (i)}
-											<li>
-												<span class="font-mono text-xs">{l.name ?? l.id ?? 'list'}</span>
-												{#if l.description}<span class="text-ink-3"> — {l.description}</span>{/if}
-											</li>
-										{/each}
-									</ul>
-								{:else if Array.isArray(lists)}
-									<p class="text-sm text-ink-2">Not on any centralized allowlist.</p>
 								{:else}
-									<p class="font-mono text-xs text-ink-2">
-										{JSON.stringify(form.allowlist.raw)}
-									</p>
+									<p class="text-sm text-ink-2">Not on any centralized allowlist.</p>
 								{/if}
 								<p class="mt-2 text-xs text-ink-3">
 									Allowlists live in three places — centralized CrowdSec lists (this check), parser

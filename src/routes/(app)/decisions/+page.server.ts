@@ -6,7 +6,7 @@ import { decisionRequest } from '#lib/server/db/app.schema.ts';
 import { listDecisions, projectionFreshness } from '#lib/server/crowdsec/lists.ts';
 import { buildClient, getServer } from '#lib/server/crowdsec/connection.ts';
 import { reconcile, requestDecision, requestRemoval } from '#lib/server/crowdsec/decisions.ts';
-import { requirePermission } from '#lib/server/roles.ts';
+import { requirePermission, requireUser } from '#lib/server/roles.ts';
 import { recordAudit } from '#lib/server/audit.ts';
 import { hasPermission } from '#lib/roles.ts';
 import { isPrivateIp, normalizeTarget, parseDuration } from '#lib/ipaddr.ts';
@@ -14,6 +14,7 @@ import { agentHello } from '#lib/server/agent/client.ts';
 import { enqueue } from '#lib/server/jobs/queue.ts';
 
 export const load: PageServerLoad = async (event) => {
+	requireUser(event);
 	const srv = await getServer(db);
 	const hello = await agentHello();
 	const freshness = await projectionFreshness(db);

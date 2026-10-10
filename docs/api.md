@@ -52,8 +52,19 @@ Errors are `{"error": "…"}` with 400/401/403/404/409/429/502 as appropriate.
 `POST /mcp` speaks JSON-RPC 2.0 with plain JSON responses (no SSE — every
 reply is a direct answer, which the spec permits). Batches are supported.
 `initialize`, `ping`, `tools/list`, `tools/call`, and `notifications/*` are
-handled; `MCP-Protocol-Version` is echoed back negotiated. `GET /mcp`
-returns a discovery document.
+handled.
+
+Protocol negotiation: supported versions are `2025-06-18` and `2025-03-26`.
+`initialize` answers the requested `params.protocolVersion` when it is one
+of those, otherwise `2025-06-18`. The response header
+`mcp-protocol-version` echoes a supported request header, otherwise
+`2025-06-18`.
+
+`GET /mcp` returns a discovery document, except when the request's `Accept`
+header includes `text/event-stream` — we serve no SSE streams, so per the
+Streamable HTTP spec that gets a `405` with `Allow: POST`. `POST` rejects a
+foreign `Origin` header (DNS-rebinding defense): when present, the parsed
+origin must equal `ORIGIN`.
 
 Tools: `status`, `list_alerts`, `get_alert`, `list_decisions`, `lookup_ip`,
 `list_sites`, `get_site`, `list_notifications`, `ban_ip` (operate),

@@ -277,13 +277,13 @@ test.describe('with a live agent', () => {
 		// The regenerated artifact now targets the adopted dir — apply it with
 		// docker:nginx as the validate+reload service target.
 		const card = page.locator('.border-rule', { hasText: 'conf.d' }).first();
-		await expect(card).toContainText(`${confDir}/crowdsec-bouncer.conf`);
+		await expect(card).toContainText(`${confDir}/crowdsec-dash.conf`);
 		await card.locator('select[name="reloadTarget"]').selectOption('docker:nginx');
 		await card.getByRole('button', { name: 'Apply via agent' }).click();
 		await expect(page.getByRole('status').first()).toContainText('Queued managed apply');
 		await expect.poll(() => latestJob(host)).toBe('succeeded');
 		// backup → write → proxy.validate → reload — in that order.
-		expect(readFileSync(join(confDir, 'crowdsec-bouncer.conf'), 'utf8')).toContain('log_format');
+		expect(readFileSync(join(confDir, 'crowdsec-dash.conf'), 'utf8')).toContain('log_format');
 		const log = calls();
 		const vi = log.indexOf('docker exec nginx nginx -t');
 		const ri = log.indexOf('docker kill -s HUP nginx');
@@ -401,7 +401,7 @@ test.describe('with a live agent', () => {
 		await expect(page.getByRole('status').first()).toContainText('all in sync');
 		await expect(page.getByText('in sync').first()).toBeVisible();
 		// Hand-edit the managed file → drift shows honestly.
-		writeFileSync(join(confDir, 'crowdsec-bouncer.conf'), '# tampered by an operator\n');
+		writeFileSync(join(confDir, 'crowdsec-dash.conf'), '# tampered by an operator\n');
 		await page.getByRole('button', { name: 'Check drift via agent' }).click();
 		await expect(page.getByRole('status').first()).toContainText('drifted');
 		await expect(page.getByText('drifted').first()).toBeVisible();

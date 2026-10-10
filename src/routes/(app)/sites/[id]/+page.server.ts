@@ -37,6 +37,7 @@ async function loadSite(id: string) {
 }
 
 export const load: PageServerLoad = async (event) => {
+	requireUser(event);
 	const s = await loadSite(event.params.id);
 	const [artifacts, checks, hello] = await Promise.all([
 		listArtifacts(db, s.id),
@@ -203,7 +204,7 @@ export const actions: Actions = {
 
 	/** Open the test window, then the admin triggers the harmless test path. */
 	markWindow: async (event) => {
-		requireUser(event);
+		requirePermission(event, 'operate');
 		const s = await loadSite(event.params.id);
 		await markTestWindow(db, s.id);
 		return { notice: `Test window opened — trigger the path below, then Run checks.` };
@@ -211,7 +212,7 @@ export const actions: Actions = {
 
 	/** Run the automated checks for this site now. */
 	runChecks: async (event) => {
-		requireUser(event);
+		requirePermission(event, 'operate');
 		const s = await loadSite(event.params.id);
 		await runSiteChecks(db, s.id);
 		return { notice: 'Checks re-run against the latest sync and metrics.' };

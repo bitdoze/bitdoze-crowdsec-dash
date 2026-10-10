@@ -38,15 +38,22 @@ export interface LapiClientOptions {
 }
 
 export interface AlertsQuery {
-	/** RFC3339 — only alerts created after this instant. */
+	/** Go duration ("90s", "4h30m", "30d") — StartedAt >= now - d. */
 	since?: string;
+	/** Go duration — StartedAt <= now - d. */
 	until?: string;
+	/** Go duration — CreatedAt <= now - d; used to page backward. */
+	createdBefore?: string;
 	limit?: number;
 	origin?: string;
 	scenario?: string;
 	ip?: string;
 	hasActiveDecision?: boolean;
+	/** false → `simulated=false` (exclude), true → `simulated=true`; undefined sends nothing. */
 	includeSimulation?: boolean;
+	/** false sends include_capi=false (alerts with CAPI/lists decisions drop out). */
+	includeCapi?: boolean;
+	sort?: 'ASC' | 'DESC';
 }
 
 const DEFAULT_TIMEOUT_MS = 8_000;
@@ -89,12 +96,16 @@ export class LapiClient {
 		const params = new URLSearchParams();
 		if (query.since) params.set('since', query.since);
 		if (query.until) params.set('until', query.until);
+		if (query.createdBefore) params.set('created_before', query.createdBefore);
 		if (query.limit) params.set('limit', String(query.limit));
 		if (query.origin) params.set('origin', query.origin);
 		if (query.scenario) params.set('scenario', query.scenario);
 		if (query.ip) params.set('ip', query.ip);
 		if (query.hasActiveDecision) params.set('has_active_decision', 'true');
-		if (query.includeSimulation) params.set('simulated', 'true');
+		if (query.includeSimulation !== undefined)
+			params.set('simulated', String(query.includeSimulation));
+		if (query.includeCapi === false) params.set('include_capi', 'false');
+		if (query.sort) params.set('sort', query.sort);
 		const qs = params.toString();
 		const data = await this.request<unknown>({ path: `/v1/alerts${qs ? `?${qs}` : ''}` });
 		if (data === null) return []; // LAPI returns `null` (not []) for an empty window
@@ -115,8 +126,10 @@ export class LapiClient {
 
 	/**
 	 * Manual decision via `POST /v1/alerts` (tier A write): the watcher pushes
-	 * an alert carrying a decision; the LAPI stores it with origin `manual`/`cscli`
-	 * — the same mechanism `cscli decisions add` uses remotely.
+	 * an alert carrying a decision — the same mechanism `cscli decisions add`
+	 * uses remotely, so the body mirrors what cscli sends (origin `cscli`,
+	 * canonical Ip/Range scopes, empty events, no labels). The response is an
+	 * array of created alert ids — empty when every source was allowlisted.
 	 */
 	async pushManualDecision(input: {
 		scope: 'ip' | 'range';
@@ -126,31 +139,38 @@ export class LapiClient {
 		reason?: string;
 	}): Promise<unknown> {
 		const now = new Date().toISOString();
+		const scope = input.scope === 'ip' ? 'Ip' : 'Range';
+		const reason = input.reason?.trim() || `manual ${input.type} via dashboard`;
 		const body = [
 			{
 				capacity: 0,
-				leakspeed: '',
-				message: input.reason?.trim() || `manual ${input.type} via dashboard`,
-				scenario: 'manual',
+				leakspeed: '0',
+				events: [],
+				events_count: 1,
+				message: reason,
+				scenario: reason,
+				scenario_hash: '',
+				scenario_version: '',
 				simulated: false,
 				source: {
-					scope: input.scope === 'ip' ? 'ip' : 'range',
+					scope,
 					value: input.value,
 					...(input.scope === 'ip' ? { ip: input.value } : { range: input.value })
 				},
 				start_at: now,
 				stop_at: now,
+				created_at: now,
 				decisions: [
 					{
 						type: input.type,
-						scope: input.scope,
+						scope,
 						value: input.value,
 						duration: input.duration,
-						origin: 'manual'
+						origin: 'cscli',
+						scenario: reason
 					}
 				],
-				events: [],
-				labels: [{ key: 'console', value: 'csdash' }]
+				remediation: true
 			}
 		];
 		return this.request({ path: '/v1/alerts', method: 'POST', body });
@@ -167,10 +187,11 @@ export class LapiClient {
 	}
 
 	/** Check whether an address is covered by a centralized allowlist. */
-	async allowlistCheck(ip: string): Promise<unknown> {
-		return this.request<unknown>({
+	async allowlistCheck(ip: string): Promise<{ allowlisted: boolean; reason: string | null }> {
+		const r = await this.request<{ allowlisted?: boolean; reason?: string } | null>({
 			path: `/v1/allowlists/check/${encodeURIComponent(ip)}`
 		});
+		return { allowlisted: r?.allowlisted === true, reason: r?.reason ?? null };
 	}
 
 	private async ensureToken(): Promise<string> {

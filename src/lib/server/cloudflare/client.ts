@@ -35,7 +35,13 @@ interface CfEnvelope<T> {
 	errors: { code: number; message: string }[];
 	messages: unknown[];
 	result: T;
-	result_info?: { page?: number; count?: number; cursor?: string };
+	result_info?: {
+		page?: number;
+		per_page?: number;
+		total_pages?: number;
+		count?: number;
+		cursors?: { before?: string; after?: string };
+	};
 }
 
 export interface TokenVerifyResult {
@@ -88,7 +94,7 @@ export interface CfRuleset {
 	rules: CfRule[];
 }
 
-export type BulkOperationStatus = 'pending' | 'completed' | 'failed';
+export type BulkOperationStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 export interface BulkOperation {
 	id: string;
@@ -101,7 +107,8 @@ export function cfClient(opts: CfClientOptions) {
 	const base = (opts.baseUrl ?? DEFAULT_BASE).replace(/\/+$/, '');
 	const doFetch = opts.fetch ?? fetch;
 
-	async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+	/** Full envelope — callers that need result_info (pagination). */
+	async function callRaw<T>(path: string, init: RequestInit = {}): Promise<CfEnvelope<T>> {
 		const res = await doFetch(`${base}${path}`, {
 			...init,
 			headers: {
@@ -127,7 +134,11 @@ export function cfClient(opts: CfClientOptions) {
 				retryAfterMs: retryAfterMs(res)
 			});
 		}
-		return body.result;
+		return body;
+	}
+
+	async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+		return (await callRaw<T>(path, init)).result;
 	}
 
 	return {
@@ -153,16 +164,23 @@ export function cfClient(opts: CfClientOptions) {
 		},
 
 		async listZones(): Promise<CfZone[]> {
-			const zones = await call<
-				{
-					id: string;
-					name: string;
-					status: string;
-					plan?: { name?: string };
-					account?: { id?: string; name?: string };
-				}[]
-			>('/zones?per_page=50');
-			return zones.map((z) => ({
+			type Raw = {
+				id: string;
+				name: string;
+				status: string;
+				plan?: { name?: string };
+				account?: { id?: string; name?: string };
+			};
+			const raw: Raw[] = [];
+			let page = 1;
+			for (;;) {
+				const env = await callRaw<Raw[]>(`/zones?page=${page}&per_page=50`);
+				raw.push(...(env.result ?? []));
+				const total = env.result_info?.total_pages ?? page;
+				if (page >= total || !(env.result ?? []).length) break;
+				page++;
+			}
+			return raw.map((z) => ({
 				id: z.id,
 				name: z.name,
 				status: z.status,
@@ -187,60 +205,50 @@ export function cfClient(opts: CfClientOptions) {
 			await call(`/accounts/${accountId}/rules/lists/${listId}`, { method: 'DELETE' });
 		},
 
-		/** All items in the list — cursors through pages. */
+		/** All items in the list — per_page + cursor pagination. */
 		async listItems(accountId: string, listId: string): Promise<CfListItem[]> {
 			const items: CfListItem[] = [];
 			let cursor: string | undefined;
 			for (;;) {
-				const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
-				const res = await doFetch(
-					`${base}/accounts/${accountId}/rules/lists/${listId}/items${qs}`,
-					{
-						headers: {
-							authorization: `Bearer ${opts.token}`,
-							'content-type': 'application/json'
-						}
-					}
+				const qs = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+				const env = await callRaw<CfListItem[]>(
+					`/accounts/${accountId}/rules/lists/${listId}/items?per_page=500${qs}`
 				);
-				const body = (await res.json()) as CfEnvelope<CfListItem[]>;
-				if (!body.success) {
-					const first = body.errors?.[0];
-					throw new CfError(first?.message ?? `list items failed (${res.status})`, {
-						status: res.status,
-						code: first?.code ?? null,
-						retryAfterMs: retryAfterMs(res)
-					});
-				}
-				items.push(...body.result);
-				cursor = body.result_info?.cursor || undefined;
-				if (!cursor || body.result.length === 0) break;
+				items.push(...env.result);
+				cursor = env.result_info?.cursors?.after || undefined;
+				if (!cursor || env.result.length === 0) break;
 			}
 			return items;
 		},
 
-		/** One bulk diff call — CF serializes it server-side into an async operation. */
-		async bulkUpdate(
+		/**
+		 * PUT the complete item set — CF replaces the whole list with the
+		 * given {ip, comment?} array asynchronously (operation_id).
+		 */
+		async replaceItems(
 			accountId: string,
 			listId: string,
-			diff: { add: CfListItem[]; remove: { ip: string }[] }
+			items: CfListItem[]
 		): Promise<{ operationId: string }> {
 			const r = await call<{ operation_id: string }>(
 				`/accounts/${accountId}/rules/lists/${listId}/items`,
-				{ method: 'PUT', body: JSON.stringify(diff) }
+				{ method: 'PUT', body: JSON.stringify(items) }
 			);
 			return { operationId: r.operation_id };
 		},
 
-		async bulkOperation(
-			accountId: string,
-			listId: string,
-			operationId: string
-		): Promise<BulkOperation> {
+		async bulkOperation(accountId: string, operationId: string): Promise<BulkOperation> {
 			const r = await call<{ id: string; status: string; error?: string; completed?: string }>(
-				`/accounts/${accountId}/rules/lists/${listId}/bulk_operations/${operationId}`
+				`/accounts/${accountId}/rules/lists/bulk_operations/${operationId}`
 			);
 			const status: BulkOperationStatus =
-				r.status === 'completed' ? 'completed' : r.status === 'failed' ? 'failed' : 'pending';
+				r.status === 'completed'
+					? 'completed'
+					: r.status === 'failed'
+						? 'failed'
+						: r.status === 'running'
+							? 'running'
+							: 'pending';
 			return { id: r.id, status, error: r.error, completed: r.completed };
 		},
 

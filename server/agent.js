@@ -25,6 +25,7 @@
  * picks up newly written include/snippet files before the reload.
  */
 import { createServer } from 'node:net';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import {
 	existsSync,
@@ -40,6 +41,10 @@ import { dirname, resolve, sep } from 'node:path';
 
 const SOCKET = process.env.AGENT_SOCKET || '/run/bitdoze-agent.sock';
 const TOKEN = process.env.AGENT_TOKEN || '';
+// Constant-time compare — the socket is a shared-secret auth boundary.
+const TOKEN_HASH = createHash('sha256').update(TOKEN).digest();
+const tokenOk = (t) =>
+	typeof t === 'string' && timingSafeEqual(TOKEN_HASH, createHash('sha256').update(t).digest());
 const CSCLI_MODE = process.env.AGENT_CSCLI || ''; // 'local' | 'docker:<container>'
 const FILE_ROOTS = (process.env.AGENT_FILE_ROOTS || '')
 	.split(':')
@@ -428,7 +433,7 @@ const server = createServer((conn) => {
 				continue;
 			}
 			if (!authed) {
-				if (msg.token === TOKEN) {
+				if (tokenOk(msg.token)) {
 					authed = true;
 					clearTimeout(authTimer);
 					conn.write(

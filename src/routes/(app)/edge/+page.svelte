@@ -158,7 +158,11 @@
 											<option value="challenge" selected={zone.action === 'challenge'}>
 												Managed Challenge
 											</option>
-											<option value="log" selected={zone.action === 'log'}>
+											<option
+												value="log"
+												selected={zone.action === 'log'}
+												disabled={!/enterprise/i.test(zone.plan ?? '')}
+											>
 												Observe (log only)
 											</option>
 										</select>
@@ -177,7 +181,8 @@
 								— {account.zones[0].rulesInUse} in use on {account.zones[0].name}
 							{/if}. Captcha-type decisions get the list's action.
 							<strong>Observe (log only)</strong> records matches in the Security Events log without blocking
-							— use it to roll out safely before enforcing.
+							— use it to roll out safely before enforcing. Requires a Cloudflare Enterprise plan; disabled
+							on other zones.
 						</p>
 					{/if}
 				</div>

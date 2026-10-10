@@ -1,10 +1,12 @@
 import type { PageServerLoad } from './$types';
 import { resolveOverview } from '#lib/server/overview.ts';
+import { requireUser } from '#lib/server/roles.ts';
 
 const RANGES = ['1h', '6h', '24h'] as const;
 export type ActivityRange = (typeof RANGES)[number];
 
 export const load: PageServerLoad = async (event) => {
+	requireUser(event);
 	const params = event.url.searchParams;
 
 	const rangeParam = params.get('range') ?? '24h';

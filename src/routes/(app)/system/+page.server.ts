@@ -16,11 +16,12 @@ import {
 	setSetting,
 	type UpdateCheck
 } from '#lib/server/ops.ts';
-import { requirePermission } from '#lib/server/roles.ts';
+import { requirePermission, requireUser } from '#lib/server/roles.ts';
 import { hasPermission } from '#lib/roles.ts';
 import { recordAudit } from '#lib/server/audit.ts';
 
 export const load: PageServerLoad = async (event) => {
+	requireUser(event);
 	const [hello, jobs, recentAudit] = await Promise.all([
 		agentHello(),
 		listJobs(db, 50),
@@ -194,7 +195,9 @@ export const actions: Actions = {
 			jobs: num('ret_jobs', DEFAULT_RETENTION.jobs),
 			audit: num('ret_audit', DEFAULT_RETENTION.audit),
 			metrics: num('ret_metrics', DEFAULT_RETENTION.metrics),
-			decisionRequests: num('ret_decisionRequests', DEFAULT_RETENTION.decisionRequests)
+			decisionRequests: num('ret_decisionRequests', DEFAULT_RETENTION.decisionRequests),
+			alerts: num('ret_alerts', DEFAULT_RETENTION.alerts),
+			rollups: num('ret_rollups', DEFAULT_RETENTION.rollups)
 		};
 		await setSetting(db, 'retention', JSON.stringify(policy));
 		await recordAudit({ event, action: 'system.retention_policy', detail: policy });

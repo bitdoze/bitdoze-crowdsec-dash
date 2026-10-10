@@ -19,6 +19,7 @@
 import { eq, inArray, lt } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import type { db } from '#lib/server/db/index.ts';
+import type { AlertsQuery } from './client.ts';
 import {
 	activityRollup,
 	alert,
@@ -33,9 +34,18 @@ import { attributeAlert, mergedEventMeta, normalize, type DatasourceMap } from '
 import { parseAliases } from '#lib/sites.ts';
 
 export const HISTORY_DAYS = 30;
-export const PAGE_SIZE = 500;
+export const PAGE_SIZE = 100;
 
 type Db = typeof db;
+
+/**
+ * LAPI `since`/`created_before` are Go durations measured from the server's
+ * own clock — convert an instant into a "<n>s" duration, clamped at 0.
+ * `slackS` widens (positive) or narrows (negative) the window.
+ */
+export function durationSince(at: Date, now = Date.now(), slackS = 0): string {
+	return `${Math.max(0, Math.floor((now - at.getTime()) / 1000) + slackS)}s`;
+}
 
 /** LAPI geo fields arrive as strings ("48.8566") — coerce, null on junk. */
 const num = (v: number | string | undefined | null): number | null => {
@@ -82,7 +92,7 @@ async function setSyncError(database: Db, source: string, error: unknown) {
 }
 
 /** Alert is skipped when every decision has a central origin (CAPI/lists). */
-function isCentralOnly(a: LapiAlert): boolean {
+export function isCentralOnly(a: LapiAlert): boolean {
 	const ds = a.decisions ?? [];
 	return ds.length > 0 && ds.every((d) => isCentralOrigin(d.origin));
 }
@@ -276,30 +286,64 @@ export interface SyncResult {
 	cursor: string;
 }
 
+/**
+ * Page backward through GET /v1/alerts. `since` is a duration computed from
+ * the cursor; further pages constrain `created_before` to the oldest
+ * created_at seen so far (5 s overlap, deduped by upstream id). LAPI orders
+ * by created_at DESC, so each page is strictly older than the previous one.
+ */
 export async function syncAlerts(
 	database: Db,
 	client: LapiClient,
 	{ historyDays = HISTORY_DAYS, pageSize = PAGE_SIZE, maxPages = 40 } = {}
 ): Promise<SyncResult> {
 	const state = await getSyncRow(database, 'alerts');
-	let since = state?.cursor ?? new Date(Date.now() - historyDays * 86_400_000).toISOString();
-	const initial = !state?.cursor;
+	const cursor = state?.cursor ?? null; // ISO of the newest created_at seen
+	// since filters started_at, which precedes created_at for slow buckets —
+	// 6 h of slack keeps the overlap wide and absorbs clock skew.
+	const since = cursor
+		? durationSince(new Date(cursor), Date.now(), 6 * 3600)
+		: `${historyDays * 24}h`;
 
 	let fetched = 0;
 	let stored = 0;
 	let skippedCentral = 0;
 	let pages = 0;
-	let newest = since;
+	let newest = cursor ?? '';
+	let hitPageLimit = false;
 	const siteIdx = await siteIndex(database);
 
-	for (;;) {
-		const batch = await client.alerts({ since, limit: pageSize, includeSimulation: false });
-		pages++;
-		if (batch.length === 0) break;
-		fetched += batch.length;
-
+	/**
+	 * Store one batch; returns the oldest created_at in it (normalized to
+	 * toISOString — LAPI timestamps arrive in mixed formats, and raw-string
+	 * comparison sorts "…05Z" before "…05.000Z"). Incremental mode skips
+	 * alerts already known AND at-or-before the cursor (the overlap window
+	 * re-delivers them every tick); backfill mode skips anything already in
+	 * the table — liveness is reconcileActiveDecisions' job.
+	 */
+	const processBatch = async (batch: LapiAlert[], mode: 'incremental' | 'backfill') => {
+		const ids = batch.flatMap((a) => (a.id === undefined ? [] : [a.id]));
+		const known = new Set(
+			ids.length
+				? (
+						await database
+							.select({ u: alert.upstreamId })
+							.from(alert)
+							.where(inArray(alert.upstreamId, ids))
+					).map((r) => r.u)
+				: []
+		);
+		let oldest: string | null = null;
+		let processed = 0;
 		for (const a of batch) {
+			const created = ts(a.created_at)?.toISOString() ?? null;
+			if (created && (!oldest || created < oldest)) oldest = created;
 			if (a.id === undefined) continue;
+			const skip =
+				mode === 'backfill'
+					? known.has(a.id)
+					: cursor !== null && created !== null && created <= cursor && known.has(a.id);
+			if (skip) continue;
 			if (isCentralOnly(a)) {
 				skippedCentral++;
 				continue;
@@ -309,22 +353,166 @@ export async function syncAlerts(
 			const siteIds = await attachSites(database, a, siteIdx);
 			if (fresh) await rollupAlert(database, a, siteIds);
 			stored++;
-			const created = ts(a.created_at);
-			if (created && created.toISOString() > newest) newest = created.toISOString();
+			processed++;
+			if (created && created > newest) newest = created;
 		}
+		return { oldest, processed };
+	};
 
-		// LAPI returns newest-first; keep paging while the window still fills a
-		// full page. `since` advances so the next page can't repeat rows forever.
-		if (batch.length < pageSize || pages >= maxPages) break;
-		since = newest;
+	// Incremental pass: from the cursor forward (overlap) then backward.
+	let oldestPrev: string | null = null;
+	let reached: string | null = null; // oldest created_at processed so far
+	for (;;) {
+		const q: AlertsQuery = {
+			since,
+			limit: pageSize,
+			includeCapi: false,
+			includeSimulation: false,
+			sort: 'DESC'
+		};
+		if (oldestPrev) {
+			// Floor + 5 s overlap — same-second boundaries dedupe by upstream id.
+			q.createdBefore = durationSince(new Date(oldestPrev), Date.now(), -5);
+		}
+		const batch = await client.alerts(q);
+		pages++;
+		if (batch.length === 0) break;
+		fetched += batch.length;
+		const { oldest } = await processBatch(batch, 'incremental');
+		if (oldest) reached = oldest;
+
+		if (batch.length < pageSize) break;
+		if (cursor && oldest && oldest <= cursor) break;
+		if (oldestPrev && oldest && oldest >= oldestPrev) {
+			hitPageLimit = true; // >PAGE alerts share one second — can't page deeper
+			break;
+		}
+		if (pages >= maxPages) {
+			hitPageLimit = true;
+			break;
+		}
+		oldestPrev = oldest;
+	}
+
+	// A backfill row created by an earlier call is continued below — read it
+	// before inserting this pass's own cursor so the row we just wrote isn't
+	// consumed in the same call.
+	const backfill = await getSyncRow(database, 'alerts.backfill');
+
+	// Any pass that stopped short of the window (initial import or an
+	// incremental pass catching up after a long outage) leaves a backfill
+	// cursor so later ticks keep walking back — otherwise the gap between
+	// `reached` and the previous cursor is lost forever.
+	if (hitPageLimit && reached && !backfill?.cursor) {
+		await database
+			.insert(syncState)
+			.values({ source: 'alerts.backfill', cursor: reached })
+			.onConflictDoUpdate({ target: syncState.source, set: { cursor: reached } });
+	}
+
+	// Continuation pass: up to 5 more backward pages per tick while a
+	// backfill cursor exists.
+	if (backfill?.cursor) {
+		let bfCursor = backfill.cursor;
+		let exhausted = false;
+		for (let i = 0; i < 5 && !exhausted; i++) {
+			const batch = await client.alerts({
+				since: `${historyDays * 24}h`,
+				createdBefore: durationSince(new Date(bfCursor), Date.now(), -5),
+				limit: pageSize,
+				includeCapi: false,
+				includeSimulation: false,
+				sort: 'DESC'
+			});
+			if (batch.length === 0) {
+				exhausted = true;
+				break;
+			}
+			fetched += batch.length;
+			pages++;
+			const { oldest, processed } = await processBatch(batch, 'backfill');
+			if (oldest) bfCursor = oldest;
+			if (batch.length < pageSize) exhausted = true;
+			// A full page of nothing-but-known alerts means this stretch was
+			// already covered — also terminates >PAGE-in-one-second replays.
+			if (batch.length === pageSize && processed === 0) exhausted = true;
+			if (oldest && new Date(oldest).getTime() < Date.now() - historyDays * 86_400_000)
+				exhausted = true;
+		}
+		if (exhausted) {
+			await database.delete(syncState).where(eq(syncState.source, 'alerts.backfill'));
+		} else {
+			await database
+				.update(syncState)
+				.set({ cursor: bfCursor })
+				.where(eq(syncState.source, 'alerts.backfill'));
+		}
 	}
 
 	// Expired decisions reconcile on every pass.
 	await database.update(decision).set({ expired: true }).where(lt(decision.until, new Date()));
 
-	const partial = pages >= maxPages || (initial && fetched === pageSize * maxPages);
-	await setSyncOk(database, 'alerts', newest, partial);
+	// Partial means a backfill row is still outstanding — a pass that hit
+	// the limit but whose continuation exhausted within this call is done.
+	const partial = !!(await getSyncRow(database, 'alerts.backfill'))?.cursor;
+	await setSyncOk(database, 'alerts', newest || null, partial);
 	return { fetched, stored, skippedCentral, partial, cursor: newest };
+}
+
+/**
+ * Reconcile local decision liveness against upstream's active set —
+ * independent of the sync window, so removals (unbans, LAPI-side expiries)
+ * on alerts outside `since` still propagate. Fetches every alert with an
+ * active decision; when upstream answers at the limit the mark-missing
+ * step is skipped because the set is provably incomplete.
+ */
+export async function reconcileActiveDecisions(
+	database: Db,
+	client: LapiClient
+): Promise<{ refreshed: number; expired: number; partial: boolean }> {
+	const LIMIT = 5000;
+	const batch = await client.alerts({
+		hasActiveDecision: true,
+		includeCapi: false,
+		includeSimulation: false,
+		limit: LIMIT
+	});
+	const siteIdx = await siteIndex(database);
+	const now = Date.now();
+	const activeUpstream = new Set<number>();
+	let refreshed = 0;
+
+	for (const a of batch) {
+		if (a.id === undefined) continue;
+		if (isCentralOnly(a)) continue;
+		const { fresh } = await upsertAlert(database, a);
+		await replaceDecisions(database, a);
+		if (fresh) {
+			const siteIds = await attachSites(database, a, siteIdx);
+			await rollupAlert(database, a, siteIds);
+		}
+		refreshed++;
+		for (const d of a.decisions ?? []) {
+			if (d.id === undefined) continue;
+			const until = ts(d.until);
+			if (until && until.getTime() > now) activeUpstream.add(d.id);
+		}
+	}
+
+	if (batch.length >= LIMIT) return { refreshed, expired: 0, partial: true };
+
+	const local = await database
+		.select({ id: decision.id, upstreamId: decision.upstreamId })
+		.from(decision)
+		.where(eq(decision.expired, false));
+	const missing = local.filter((r) => !activeUpstream.has(r.upstreamId)).map((r) => r.id);
+	for (let i = 0; i < missing.length; i += 500) {
+		await database
+			.update(decision)
+			.set({ expired: true })
+			.where(inArray(decision.id, missing.slice(i, i + 500)));
+	}
+	return { refreshed, expired: missing.length, partial: false };
 }
 
 export async function recordSyncError(database: Db, error: unknown) {

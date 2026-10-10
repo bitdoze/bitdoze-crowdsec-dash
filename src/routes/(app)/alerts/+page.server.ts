@@ -5,10 +5,12 @@ import { db } from '#lib/server/db/index.ts';
 import { listAlerts, projectionFreshness } from '#lib/server/crowdsec/lists.ts';
 import { getServer } from '#lib/server/crowdsec/connection.ts';
 import { savedView, site } from '#lib/server/db/app.schema.ts';
-import { requirePermission } from '#lib/server/roles.ts';
+import { requirePermission, requireUser } from '#lib/server/roles.ts';
 import { recordAudit } from '#lib/server/audit.ts';
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async (event) => {
+	requireUser(event);
+	const url = event.url;
 	const connected = !!(await getServer(db));
 	const freshness = await projectionFreshness(db);
 	const sites = await db

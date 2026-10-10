@@ -17,7 +17,9 @@
 		['ret_jobs', 'Jobs', data.retention.jobs],
 		['ret_audit', 'Audit', data.retention.audit],
 		['ret_metrics', 'Metrics', data.retention.metrics],
-		['ret_decisionRequests', 'Decision requests', data.retention.decisionRequests]
+		['ret_decisionRequests', 'Decision requests', data.retention.decisionRequests],
+		['ret_alerts', 'Alert cache', data.retention.alerts],
+		['ret_rollups', 'Hourly aggregates', data.retention.rollups]
 	] as [string, string, number][]);
 
 	const jobStamp: Record<string, 'verified' | 'stale' | 'failed' | 'not_configured'> = {

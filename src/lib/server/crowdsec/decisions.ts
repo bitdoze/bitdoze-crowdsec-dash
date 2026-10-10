@@ -9,6 +9,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { decision, decisionRequest } from '#lib/server/db/app.schema.ts';
 import { LapiClient } from './client.ts';
 import type { db } from '#lib/server/db/index.ts';
+import { markEdgeDirty } from '#lib/server/cloudflare/edge-dirty.ts';
 
 type Db = typeof db;
 
@@ -39,7 +40,7 @@ export async function requestDecision(
 		updatedAt: new Date()
 	};
 	try {
-		await client.pushManualDecision({
+		const res = await client.pushManualDecision({
 			scope: input.scope,
 			value: input.value,
 			type: input.type,
@@ -47,11 +48,19 @@ export async function requestDecision(
 			duration: formatDuration(input.durationS),
 			reason: input.reason
 		});
+		// LAPI silently skips allowlisted sources — the ids array comes
+		// back empty, which is a failure the UI must show honestly.
+		if (Array.isArray(res) && res.length === 0) {
+			const error = 'LAPI stored no alert — the address is probably on a centralized allowlist.';
+			await database.insert(decisionRequest).values({ ...row, state: 'failed', error });
+			return { ok: false, error };
+		}
 	} catch (e) {
 		await database.insert(decisionRequest).values({ ...row, state: 'failed', error: msg(e) });
 		return { ok: false, error: msg(e) };
 	}
 	await database.insert(decisionRequest).values(row);
+	markEdgeDirty();
 	await reconcile(database);
 	return { ok: true };
 }
@@ -73,6 +82,13 @@ export async function requestRemoval(
 	} catch (e) {
 		return { ok: false, error: msg(e) };
 	}
+	// The LAPI expires the decision immediately — mirror that in the
+	// projection now instead of waiting for the alert to re-sync (it may
+	// be outside the sync window entirely).
+	await database
+		.update(decision)
+		.set({ expired: true, until: new Date() })
+		.where(eq(decision.upstreamId, upstreamDecisionId));
 	await database.insert(decisionRequest).values({
 		id: id(),
 		scope: value.includes('/') ? 'range' : 'ip',
@@ -85,6 +101,8 @@ export async function requestRemoval(
 		createdBy: userId ?? null,
 		updatedAt: new Date()
 	});
+	markEdgeDirty();
+	await reconcile(database);
 	return { ok: true };
 }
 
@@ -101,6 +119,24 @@ export async function reconcile(database: Db): Promise<{ confirmed: number; remo
 	let confirmed = 0;
 	let removed = 0;
 	for (const req of pending) {
+		// A removal carrying its upstream id resolves against that exact
+		// row — absent or expired counts as gone, regardless of whether
+		// the decision ever entered the sync window.
+		if (req.state === 'removing' && req.upstreamId != null) {
+			const [row] = await database
+				.select({ expired: decision.expired })
+				.from(decision)
+				.where(eq(decision.upstreamId, req.upstreamId))
+				.limit(1);
+			if (!row || row.expired) {
+				await database
+					.update(decisionRequest)
+					.set({ state: 'removed', updatedAt: new Date() })
+					.where(eq(decisionRequest.id, req.id));
+				removed++;
+			}
+			continue;
+		}
 		const [active] = await database
 			.select({ id: decision.upstreamId })
 			.from(decision)

@@ -12,7 +12,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.ts';
 import { buildClient, getServer } from './connection.ts';
-import { syncAlerts } from './sync.ts';
+import { reconcileActiveDecisions, syncAlerts } from './sync.ts';
 import { scrapeMetrics, recordScrapeError } from './scrape.ts';
 import { reconcile } from './decisions.ts';
 import { dispatchOutbox } from '#lib/server/notify/deliver.ts';
@@ -21,6 +21,7 @@ import { runSiteChecks } from '#lib/server/protect/checks.ts';
 import { drainJobs, enqueue } from '#lib/server/jobs/queue.ts';
 import { checkDiskPressure, checkForUpdate, runRetention } from '#lib/server/ops.ts';
 import { cloudflareAccount, site, syncState } from '#lib/server/db/app.schema.ts';
+import { consumeEdgeDirty, peekEdgeDirty } from '#lib/server/cloudflare/edge-dirty.ts';
 
 export const SYNC_INTERVAL_MS = 30_000;
 /** Automated protection checks re-run once an hour — cheap projection reads. */
@@ -29,6 +30,8 @@ const CHECKS_EVERY_MS = 3_600_000;
 const OPS_EVERY_MS = 86_400_000;
 /** Edge lists fully reconcile every 15 min; fresher syncs happen on change. */
 const EDGE_RECONCILE_MS = 15 * 60_000;
+/** Decision liveness reconciles upstream-wide every 5 min. */
+const ACTIVE_RECONCILE_MS = 300_000;
 /** Don't re-enqueue an edge sync fresher than this without new alerts. */
 const EDGE_DEBOUNCE_MS = 120_000;
 
@@ -37,7 +40,11 @@ const EDGE_DEBOUNCE_MS = 120_000;
  * list or selected zones. Idempotency keys collapse overlapping ticks;
  * the job itself diffs live list state, so bursts are harmless.
  */
-async function maybeEnqueueEdgeSync(freshAlerts: boolean) {
+export async function maybeEnqueueEdgeSync(freshAlerts: boolean) {
+	// Peek, don't consume: a user-initiated decision change bypasses the
+	// debounce, and the flag is cleared only after every account's enqueue
+	// landed — a throw mid-loop must not lose it.
+	const dirty = peekEdgeDirty();
 	const accounts = await db
 		.select({
 			id: cloudflareAccount.id,
@@ -50,8 +57,8 @@ async function maybeEnqueueEdgeSync(freshAlerts: boolean) {
 	for (const a of accounts) {
 		if (a.tokenStatus !== 'active' && !a.listId) continue;
 		const age = a.lastSyncAt ? now - a.lastSyncAt.getTime() : Infinity;
-		const due = age > EDGE_RECONCILE_MS || freshAlerts;
-		if (!due || age < EDGE_DEBOUNCE_MS) continue;
+		const due = age > EDGE_RECONCILE_MS || freshAlerts || dirty;
+		if (!due || (age < EDGE_DEBOUNCE_MS && !dirty)) continue;
 		await enqueue(db, {
 			kind: 'cloudflare.sync',
 			params: { accountId: a.id },
@@ -59,6 +66,7 @@ async function maybeEnqueueEdgeSync(freshAlerts: boolean) {
 			lockKey: `cloudflare:${a.id}`
 		});
 	}
+	if (dirty) consumeEdgeDirty();
 }
 
 let started = false;
@@ -66,6 +74,7 @@ let running = false;
 let lastChecksAt = 0;
 let lastOpsAt = 0;
 let lastDiskAt = 0;
+let lastActiveReconcileAt = 0;
 
 async function previousError(source: 'alerts' | 'metrics'): Promise<string | null> {
 	const row = await db
@@ -139,6 +148,12 @@ async function tick() {
 			try {
 				const result = await syncAlerts(db, client);
 				await reportOutcome('alerts', null, `${result.stored} alerts stored`, !!hadError);
+				if (Date.now() - lastActiveReconcileAt >= ACTIVE_RECONCILE_MS) {
+					lastActiveReconcileAt = Date.now();
+					await reconcileActiveDecisions(db, client).catch((e) =>
+						console.error('active-decision reconcile failed:', e)
+					);
+				}
 				await maybeEnqueueEdgeSync(result.stored > 0).catch((e) =>
 					console.error('edge sync enqueue failed:', e)
 				);

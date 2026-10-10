@@ -117,15 +117,19 @@ export async function syncEdgeList(accountId: string): Promise<EdgeSyncResult> {
 			return { items: current.length, added: 0, removed: 0, dropped };
 		}
 
+		// CF's PUT replaces the whole list — the diff still tells us (and the
+		// UI) what changed, but the write is always the full kept set.
 		const { operationId } = await withRetry(() =>
-			cf.bulkUpdate(account!.cfAccountId, list.id, diff)
+			cf.replaceItems(
+				account!.cfAccountId,
+				list.id,
+				kept.map(({ ip, comment }) => (comment ? { ip, comment } : { ip }))
+			)
 		);
 		let status = 'pending';
-		for (let i = 0; i < POLL_ATTEMPTS && status === 'pending'; i++) {
+		for (let i = 0; i < POLL_ATTEMPTS && (status === 'pending' || status === 'running'); i++) {
 			await sleep(POLL_INTERVAL_MS);
-			const op = await withRetry(() =>
-				cf.bulkOperation(account!.cfAccountId, list.id, operationId)
-			);
+			const op = await withRetry(() => cf.bulkOperation(account!.cfAccountId, operationId));
 			status = op.status;
 			if (op.status === 'failed')
 				throw new Error(`bulk operation failed: ${op.error ?? 'unknown'}`);

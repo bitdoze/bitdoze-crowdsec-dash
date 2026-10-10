@@ -9,7 +9,17 @@ import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 import path from 'node:path';
 import * as schema from '#lib/server/db/schema.ts';
-import { appSetting, job, notification, notificationOutbox } from '#lib/server/db/app.schema.ts';
+import {
+	activityRollup,
+	alert,
+	alertSite,
+	appSetting,
+	decision,
+	job,
+	notification,
+	notificationOutbox,
+	site
+} from '#lib/server/db/app.schema.ts';
 import { recordEvent } from '#lib/server/notify/core.ts';
 import { saveChannel } from '#lib/server/notify/channels.ts';
 import {
@@ -65,7 +75,9 @@ describe('runRetention', () => {
 			jobs: 30,
 			audit: 365,
 			metrics: 30,
-			decisionRequests: 30
+			decisionRequests: 30,
+			alerts: 30,
+			rollups: 90
 		});
 		expect(counts.notifications).toBe(1);
 		const remaining = await db.select().from(notification);
@@ -98,11 +110,99 @@ describe('runRetention', () => {
 			jobs: 30,
 			audit: 365,
 			metrics: 30,
-			decisionRequests: 30
+			decisionRequests: 30,
+			alerts: 30,
+			rollups: 90
 		});
 		expect(counts.jobs).toBe(1);
 		const rows = await db.select().from(job);
 		expect(rows.map((j) => j.id)).toEqual(['j-live']);
+	});
+
+	it('prunes alerts past the cache window when every decision expired', async () => {
+		await db.insert(site).values({ id: 's1', hostname: 's.example.com', source: 'manual' });
+		await db.insert(alert).values({
+			id: 'a-old',
+			upstreamId: 501,
+			createdAt: old(40),
+			syncedAt: new Date()
+		});
+		await db.insert(alert).values({
+			id: 'a-fresh',
+			upstreamId: 502,
+			createdAt: old(2),
+			syncedAt: new Date()
+		});
+		await db.insert(alertSite).values({ alertUpstreamId: 501, siteId: 's1', signal: 'context' });
+		await db.insert(decision).values({
+			id: 'd-old',
+			upstreamId: 9001,
+			alertUpstreamId: 501,
+			expired: true,
+			until: old(35),
+			syncedAt: new Date()
+		});
+		const counts = await runRetention(db, {
+			notifications: 90,
+			jobs: 30,
+			audit: 365,
+			metrics: 30,
+			decisionRequests: 30,
+			alerts: 30,
+			rollups: 90
+		});
+		expect(counts.alerts).toBe(1);
+		expect((await db.select().from(alert)).map((a) => a.upstreamId)).toEqual([502]);
+		// Site links and the expired decision went with the alert.
+		expect(await db.select().from(alertSite)).toHaveLength(0);
+		expect(await db.select().from(decision)).toHaveLength(0);
+	});
+
+	it('keeps an old alert that still carries an active decision', async () => {
+		await db.insert(alert).values({
+			id: 'a-live',
+			upstreamId: 503,
+			createdAt: old(60),
+			syncedAt: new Date()
+		});
+		await db.insert(decision).values({
+			id: 'd-live',
+			upstreamId: 9002,
+			alertUpstreamId: 503,
+			expired: false,
+			until: new Date(Date.now() + 3_600_000),
+			syncedAt: new Date()
+		});
+		const counts = await runRetention(db, {
+			notifications: 90,
+			jobs: 30,
+			audit: 365,
+			metrics: 30,
+			decisionRequests: 30,
+			alerts: 30,
+			rollups: 90
+		});
+		expect(counts.alerts).toBe(0);
+		expect((await db.select().from(alert)).map((a) => a.upstreamId)).toEqual([503]);
+		expect((await db.select().from(decision)).map((d) => d.id)).toEqual(['d-live']);
+	});
+
+	it('prunes hourly rollups past their window', async () => {
+		await db.insert(activityRollup).values([
+			{ id: 'r-old', hour: old(100), count: 3 },
+			{ id: 'r-new', hour: old(10), count: 1 }
+		]);
+		const counts = await runRetention(db, {
+			notifications: 90,
+			jobs: 30,
+			audit: 365,
+			metrics: 30,
+			decisionRequests: 30,
+			alerts: 30,
+			rollups: 90
+		});
+		expect(counts.activityRollups).toBe(1);
+		expect((await db.select().from(activityRollup)).map((r) => r.id)).toEqual(['r-new']);
 	});
 
 	it('policy override is persisted and merged with defaults', async () => {

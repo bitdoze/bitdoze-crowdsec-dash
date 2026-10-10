@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { LapiClient, LapiError } from '#lib/server/crowdsec/client.ts';
+import { validateAddAlerts } from '../e2e/lapi-contract.mjs';
 
 function mockFetch(handler: (url: string, init: RequestInit) => Response | Promise<Response>) {
 	const calls: { url: string; init: RequestInit }[] = [];
@@ -50,13 +51,22 @@ describe('LapiClient', () => {
 		expect(await client(f).alerts()).toEqual([]);
 	});
 
-	it('passes since/limit filters as query params', async () => {
+	it('passes duration filters and maps created_before/include_capi/sort', async () => {
 		const { f, calls } = mockFetch((url) =>
 			url.includes('watchers/login') ? login() : new Response('[]', { status: 200 })
 		);
-		await client(f).alerts({ since: '2026-01-01T00:00:00Z', limit: 500 });
-		const url = calls.at(-1)!.url;
-		expect(url).toContain('since=2026-01-01');
+		await client(f).alerts({
+			since: '96h',
+			createdBefore: '3600s',
+			limit: 500,
+			includeCapi: false,
+			sort: 'DESC'
+		});
+		const url = decodeURIComponent(calls.at(-1)!.url);
+		expect(url).toContain('since=96h');
+		expect(url).toContain('created_before=3600s');
+		expect(url).toContain('include_capi=false');
+		expect(url).toContain('sort=DESC');
 		expect(url).toContain('limit=500');
 	});
 
@@ -122,11 +132,11 @@ describe('LapiClient', () => {
 });
 
 describe('LapiClient — decisions & allowlists', () => {
-	it('pushManualDecision posts an alert carrying an origin=manual decision', async () => {
+	it('pushManualDecision posts a cscli-shaped alert upstream accepts', async () => {
 		const { f, calls } = mockFetch((url) =>
 			url.includes('watchers/login')
 				? login()
-				: new Response(JSON.stringify({ ids: [1] }), { status: 200 })
+				: new Response(JSON.stringify(['100']), { status: 200 })
 		);
 		await client(f).pushManualDecision({
 			scope: 'ip',
@@ -138,17 +148,20 @@ describe('LapiClient — decisions & allowlists', () => {
 		const call = calls.at(-1)!;
 		expect(call.url).toContain('/v1/alerts');
 		expect(call.init.method).toBe('POST');
-		const body = JSON.parse(call.init.body as string)[0];
-		expect(body.scenario).toBe('manual');
-		expect(body.source).toMatchObject({ scope: 'ip', value: '9.9.9.9', ip: '9.9.9.9' });
+		const parsed = JSON.parse(call.init.body as string);
+		expect(validateAddAlerts(parsed)).toBeNull();
+		const body = parsed[0];
+		expect(body.scenario).toBe('brute force');
+		expect(body.source).toMatchObject({ scope: 'Ip', value: '9.9.9.9', ip: '9.9.9.9' });
 		expect(body.decisions[0]).toMatchObject({
 			type: 'ban',
-			scope: 'ip',
+			scope: 'Ip',
 			value: '9.9.9.9',
 			duration: '4h',
-			origin: 'manual'
+			origin: 'cscli'
 		});
 		expect(body.message).toBe('brute force');
+		expect(body.labels).toBeUndefined();
 	});
 
 	it('pushManualDecision uses range scope for CIDRs', async () => {
@@ -162,15 +175,19 @@ describe('LapiClient — decisions & allowlists', () => {
 			duration: '1h'
 		});
 		const body = JSON.parse(calls.at(-1)!.init.body as string)[0];
-		expect(body.source).toMatchObject({ scope: 'range', value: '10.0.0.0/8', range: '10.0.0.0/8' });
-		expect(body.decisions[0].scope).toBe('range');
+		expect(body.source).toMatchObject({
+			scope: 'Range',
+			value: '10.0.0.0/8',
+			range: '10.0.0.0/8'
+		});
+		expect(body.decisions[0].scope).toBe('Range');
 	});
 
 	it('deleteDecision issues DELETE /v1/decisions/:id', async () => {
 		const { f, calls } = mockFetch((url) =>
 			url.includes('watchers/login')
 				? login()
-				: new Response(JSON.stringify({ nbDeleted: 1 }), { status: 200 })
+				: new Response(JSON.stringify({ nbDeleted: '1' }), { status: 200 })
 		);
 		await client(f).deleteDecision(42);
 		const call = calls.at(-1)!;
@@ -178,14 +195,28 @@ describe('LapiClient — decisions & allowlists', () => {
 		expect(call.init.method).toBe('DELETE');
 	});
 
-	it('allowlistCheck hits /v1/allowlists/check/:ip', async () => {
+	it('allowlistCheck normalizes the omitempty response', async () => {
 		const { f, calls } = mockFetch((url) =>
 			url.includes('watchers/login')
 				? login()
-				: new Response(JSON.stringify({ address: '1.2.3.4', allowlists: [] }), { status: 200 })
+				: new Response(JSON.stringify({ allowlisted: true, reason: 'office-egress' }), {
+						status: 200
+					})
 		);
-		const res = (await client(f).allowlistCheck('1.2.3.4')) as { allowlists: unknown[] };
+		expect(await client(f).allowlistCheck('1.2.3.4')).toEqual({
+			allowlisted: true,
+			reason: 'office-egress'
+		});
 		expect(calls.at(-1)!.url).toContain('/v1/allowlists/check/1.2.3.4');
-		expect(res.allowlists).toEqual([]);
+	});
+
+	it('allowlistCheck maps {} to a clean negative', async () => {
+		const { f } = mockFetch((url) =>
+			url.includes('watchers/login') ? login() : new Response('{}', { status: 200 })
+		);
+		expect(await client(f).allowlistCheck('9.9.9.9')).toEqual({
+			allowlisted: false,
+			reason: null
+		});
 	});
 });

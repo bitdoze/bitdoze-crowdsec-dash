@@ -108,7 +108,11 @@ export function ruleExpression(
 	return `(${expr})`;
 }
 
-/** `log` is Cloudflare's observe mode — matches are recorded, not blocked. */
+/**
+ * `log` is Cloudflare's observe mode — matches are recorded, not blocked.
+ * The stored 'challenge' maps to `managed_challenge` upstream: CF's bare
+ * `challenge` action is the legacy *Interactive* Challenge.
+ */
 export type EdgeRuleAction = 'block' | 'challenge' | 'log';
 
 export function edgeRule(
@@ -123,7 +127,7 @@ export function edgeRule(
 	return {
 		ref: RULE_REF,
 		expression: ruleExpression(listName, hostnames, paths),
-		action,
+		action: action === 'challenge' ? 'managed_challenge' : action,
 		description: `CrowdSec edge — decisions from ${listName}${scope ? ` (${scope})` : ''}. Managed by bitdoze-crowdsec-dash.`,
 		enabled: true
 	};

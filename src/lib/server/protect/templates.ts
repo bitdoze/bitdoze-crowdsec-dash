@@ -220,11 +220,12 @@ on_success: break`
 name: dashboard_captcha_ip_remediation
 filters:
   - Alert.Remediation == true && Alert.GetScope() == "Ip" &&
-    Alert.GetScenario() in ["crowdsecurity/http-probing", "crowdsecurity/http-scan"]
+    Alert.GetScenario() in ["crowdsecurity/http-probing", "crowdsecurity/http-crawl-non_statics"]
 decisions:
   - type: captcha
     duration: 4h
 on_success: break
+---
 # Everything else still gets the escalating ban.
 name: dashboard_default_ip_remediation
 filters:
@@ -250,6 +251,25 @@ ${b.yaml}
 
 /* ---------------------------------- Caddy ---------------------------------- */
 
+/** Cloudflare published ranges (keep current: https://www.cloudflare.com/ips/). */
+const CF_CIDRS = [
+	'173.245.48.0/20',
+	'103.21.244.0/22',
+	'103.22.200.0/22',
+	'103.31.4.0/22',
+	'141.101.64.0/18',
+	'108.162.192.0/18',
+	'190.93.240.0/20',
+	'188.114.96.0/20',
+	'197.234.240.0/22',
+	'198.41.128.0/17',
+	'162.158.0.0/15',
+	'104.16.0.0/13',
+	'104.24.0.0/14',
+	'172.64.0.0/13',
+	'131.0.72.0/22'
+];
+
 function caddy(input: PlanInput): Artifact[] {
 	const logPath = `${input.logDir}/${input.hostname}.log`;
 	const slug = input.hostname.replace(/[^a-z0-9]/g, '-');
@@ -260,11 +280,12 @@ function caddy(input: PlanInput): Artifact[] {
 	// can validate before reloading.
 	const accessLog: Artifact = {
 		kind: 'access_log',
-		title: `Caddyfile snippet — JSON access log for ${input.hostname}`,
+		title: `Caddyfile — CrowdSec handler + JSON access log for ${input.hostname}`,
 		format: 'caddyfile',
-		content: `# ${confDir}/${slug}-log.caddy
-# Snippet file — add one line inside the site's Caddyfile block:
-#     import ${confDir}/${slug}-log.caddy
+		content: `# ${confDir}/${slug}.caddy
+# Per-site file — add one line inside the site's Caddyfile block:
+#     import ${confDir}/${slug}.caddy
+crowdsec   # its LAPI settings live in crowdsec-global.caddy
 log {
 	output file ${logPath}
 	format json
@@ -273,32 +294,33 @@ log {
 	};
 	const realIp: Artifact = {
 		kind: 'real_ip',
-		title: 'Caddyfile — trusted proxies for real client IPs',
+		title: 'Caddyfile — trusted proxies for real client IPs (global options)',
 		format: 'caddyfile',
-		content: `# Inside the site block — without this the parser sees the proxy's
-# own address. Add each trusted proxy range; with Cloudflare use its
-# published ranges (https://www.cloudflare.com/ips/).
-${input.hostname} {
-	servers {
-		trusted_proxies static ${input.cloudflare ? 'cloudflare' : '10.0.0.0/8 172.16.0.0/12 192.168.0.0/16'}
-	}
-${
-	input.cloudflare
-		? `	# Forward CF-Connecting-IP into the logs as the client address.
-	client_ip_headers CF-Connecting-IP
-`
-		: ''
-}}
+		content: `# ${confDir}/crowdsec-realip.caddy
+# \`servers\` is a GLOBAL option — import this inside the global options
+# block at the top of your Caddyfile, never inside a site block:
+#     {
+#         import ${confDir}/crowdsec-realip.caddy
+#     }
+servers {
+	trusted_proxies static ${input.cloudflare ? CF_CIDRS.join(' ') : 'private_ranges'}
+${input.cloudflare ? '\tclient_ip_headers CF-Connecting-IP\n' : ''}}
 `
 	};
 	const bouncer: Artifact = {
 		kind: 'bouncer',
-		title: `Caddyfile snippet — CrowdSec bouncer for ${input.hostname}`,
+		title: 'Caddyfile — CrowdSec bouncer (global options)',
 		format: 'caddyfile',
-		content: `# ${confDir}/${slug}.caddy
+		content: `# ${confDir}/crowdsec-global.caddy
+# Shared by every site on this Caddy instance — import it inside the
+# global options block at the top of your Caddyfile, not inside a site
+# block:
+#     {
+#         import ${confDir}/crowdsec-global.caddy
+#     }
 # The stock caddy image does NOT ship the bouncer — use the pinned build in
-# the Compose artifact. Add one line inside the site's Caddyfile block:
-#     import ${confDir}/${slug}.caddy
+# the Compose artifact.
+order crowdsec first
 crowdsec {
 	api_url ${input.lapiUrl}
 	api_key <bouncer-key>   # issued by the managed apply job
@@ -332,7 +354,8 @@ listen_addr: 0.0.0.0:7422
       dockerfile_inline: |
         FROM caddy:2-builder AS builder
         RUN xcaddy build \\
-            --with github.com/hslatman/caddy-crowdsec-bouncer@v0.14.1
+            --with github.com/hslatman/caddy-crowdsec-bouncer/http@v0.14.1 \\
+            --with github.com/hslatman/caddy-crowdsec-bouncer/appsec@v0.14.1
         FROM caddy:2
         COPY --from=builder /usr/bin/caddy /usr/bin/caddy
     volumes:
@@ -418,7 +441,10 @@ http:
           crowdsecLapiKey: <bouncer-key>   # issued by the managed apply job
           crowdsecLapiHost: ${input.lapiUrl.replace(/^https?:\/\//, '')}
           crowdsecMode: stream
-          forwardedHeadersTrustedIPs: ${input.cloudflare ? '173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22' : '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'}
+          forwardedHeadersTrustedIPs:
+${(input.cloudflare ? CF_CIDRS : ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'])
+	.map((c) => `            - "${c}"`)
+	.join('\n')}
           # crowdsecAppsecEnabled: true    # uncomment for inline WAF
   routers:
     ${routerName}:
@@ -536,22 +562,33 @@ function nginx(input: PlanInput): Artifact[] {
 	const confDir = input.confDir ?? '/etc/nginx/conf.d';
 	const accessLog: Artifact = {
 		kind: 'access_log',
-		title: 'nginx conf.d — crowdsec log format + Lua bouncer hook',
+		title: 'nginx conf.d — crowdsec log format',
 		format: 'nginx',
 		// Complete conf.d file — included inside http{} on Debian/RHEL stock
-		// configs, so every directive here is valid in http context. New file
-		// only; no existing nginx config is edited. `nginx -t` covers it.
-		content: `# ${confDir}/crowdsec-bouncer.conf
-# Shared across sites — these are http-context directives, so applying
-# this artifact from any site writes the same file.
-# Requires the Lua module: apt install libnginx-mod-http-lua, or use
-# OpenResty + cs-openresty-bouncer.
-lua_package_path '/usr/lib/crowdsec/lua/?.lua;;';
-init_by_lua_block { require "crowdsec"; }
-# Enforce on every server on this instance. To scope enforcement to one
-# site instead, remove this line and add it inside that site's server{}
-# block:
-access_by_lua_block { require("crowdsec").allow("bitdoze-dash"); }
+		// configs. Only the log_format lives here: enforcement is the
+		// bouncer package's job, and duplicating its lua blocks would break
+		// nginx -t once the package is installed.
+		content: `# ${confDir}/crowdsec-dash.conf
+# Shared across sites — an http-context directive, so applying this
+# artifact from any site writes the same file.
+#
+# Enforcement comes from the crowdsec-nginx-bouncer package — it ships
+# its own /etc/nginx/conf.d/crowdsec_nginx.conf, so installing it is all
+# the lua wiring you need:
+#   apt install crowdsec-nginx-bouncer
+#
+# For OpenResty or manual installs, replicate the upstream block in one
+# of YOUR http-context files (do NOT enable it here — duplicate
+# init_by_lua_block directives fail nginx -t once the package lands):
+#   lua_package_path '/usr/lib/crowdsec/lua/?.lua;;';
+#   lua_shared_dict crowdsec_cache 50m;
+#   init_by_lua_block {
+#       cs = require "crowdsec"
+#       local ok, err = cs.init("/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf",
+#           "crowdsec-nginx-bouncer/v1.2.3")
+#   }
+#   access_by_lua_block { cs.Allow(ngx.var.remote_addr) }
+#   init_worker_by_lua_block { cs.SetupStream(); cs.SetupMetrics() }
 
 # The default 'combined' format has no $host — attribution needs it.
 log_format crowdsec '$host $remote_addr - $remote_user [$time_local] '
@@ -599,12 +636,33 @@ real_ip_recursive on;
 		title: 'cs-nginx-bouncer configuration file',
 		format: 'shell',
 		content: `# /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf
-# Complete file — the Lua bouncer daemon reads its API credentials here.
-# Install first: apt install crowdsec-nginx-bouncer-lua (or the OpenResty
-# recipe), and keep the bouncer conf.d artifact applied.
+# Complete file — the lua bouncer reads its LAPI credentials here.
+# Install first: apt install crowdsec-nginx-bouncer (Debian package),
+# or follow the OpenResty manual-install recipe.
+#
+# NOTE: the bouncer's config parser takes everything after the first
+# '=' as the value — comments are only valid on their own lines.
+ENABLED=true
 API_URL=${input.lapiUrl}
-API_KEY=<bouncer-key>   # issued by the managed apply job
-# APPSEC_URL=http://127.0.0.1:7422        # uncomment for inline WAF
+# issued by the managed apply job
+API_KEY=<bouncer-key>
+CACHE_EXPIRATION=1
+BOUNCING_ON_TYPE=all
+FALLBACK_REMEDIATION=ban
+REQUEST_TIMEOUT=3000
+UPDATE_FREQUENCY=10
+MODE=live
+EXCLUDE_LOCATION=
+BAN_TEMPLATE_PATH=/var/lib/crowdsec/lua/templates/ban.html
+REDIRECT_LOCATION=
+RET_CODE=
+CAPTCHA_PROVIDER=
+SECRET_KEY=
+SITE_KEY=
+CAPTCHA_TEMPLATE_PATH=/var/lib/crowdsec/lua/templates/captcha.html
+CAPTCHA_EXPIRATION=3600
+# Uncomment for inline WAF:
+# APPSEC_URL=http://127.0.0.1:7422
 `
 	};
 	const appsec: Artifact = {
@@ -631,7 +689,7 @@ listen_addr: 127.0.0.1:7422
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./conf.d:/etc/nginx/conf.d:ro
-      - ./crowdsec-nginx-bouncer.conf:/etc/crowdsec/bouncer.conf:ro
+      - ./crowdsec-nginx-bouncer.conf:/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf:ro
       - ${input.logDir}:${input.logDir}
 `
 				}

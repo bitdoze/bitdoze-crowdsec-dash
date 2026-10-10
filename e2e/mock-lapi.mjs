@@ -4,6 +4,7 @@
  * connect/sync flows: login, paged alerts, and a metrics scrape.
  */
 import { createServer } from 'node:http';
+import { filterAlerts, validateAddAlerts } from './lapi-contract.mjs';
 
 // Dates are relative to now so rollups, the attack map, and the 24h windows
 // always see the fixture alerts regardless of when the suite runs.
@@ -83,6 +84,32 @@ const ALERTS = [
 		stopped_at: ago(3),
 		source: { scope: 'Ip', value: '192.0.2.1', ip: '192.0.2.1' },
 		decisions: [{ id: 23, origin: 'CAPI', type: 'ban', scope: 'Ip', value: '192.0.2.1' }],
+		context: [],
+		events: []
+	},
+	{
+		// Simulated alerts arrive by default — the client must pass
+		// simulated=false so a dry-run ban never enters the projection.
+		id: 5,
+		scenario: 'crowdsecurity/http-probing',
+		message: 'simulated alert — must never be projected',
+		simulated: true,
+		created_at: ago(1),
+		started_at: ago(1),
+		stopped_at: ago(1),
+		source: { scope: 'Ip', value: '198.51.100.99', ip: '198.51.100.99' },
+		decisions: [
+			{
+				id: 24,
+				origin: 'crowdsec',
+				type: 'ban',
+				scope: 'Ip',
+				value: '198.51.100.99',
+				duration: '4h',
+				scenario: 'crowdsecurity/http-probing',
+				until: '2999-01-01T00:00:00Z'
+			}
+		],
 		context: [],
 		events: []
 	}
@@ -254,22 +281,36 @@ const server = createServer((req, res) => {
 		return;
 	}
 
-	// Manual decision write path (watcher credential): POST /v1/alerts with a
-	// decision body → stored and returned by subsequent GET /v1/alerts.
+	// Manual decision write path (watcher credential): POST /v1/alerts
+	// enforces the real validation contract — sources on a centralized
+	// allowlist are silently skipped (ids array then comes back empty).
 	if (url.pathname === '/v1/alerts' && req.method === 'POST') {
 		let body = '';
 		req.on('data', (c) => (body += c));
 		req.on('end', () => {
-			const alerts = JSON.parse(body || '[]');
+			let alerts;
+			try {
+				alerts = JSON.parse(body || 'null');
+			} catch {
+				json(400, { message: 'invalid JSON body' });
+				return;
+			}
+			const invalid = validateAddAlerts(alerts);
+			if (invalid) {
+				json(invalid.status, { message: invalid.message });
+				return;
+			}
+			const allowlisted = new Set(ALLOWLISTS.flatMap((l) => l.items));
 			const ids = [];
 			for (const a of alerts) {
+				if (allowlisted.has(a.source?.value)) continue; // allowlisted sources skipped
 				const alertId = nextAlertId++;
 				const decisions = (a.decisions ?? []).map((d, i) => ({
 					id: nextDecisionId++,
 					uuid: `mock-${alertId}-${i}`,
-					origin: d.origin ?? 'manual',
+					origin: d.origin ?? 'cscli',
 					type: d.type,
-					scope: d.scope === 'ip' ? 'Ip' : 'Range',
+					scope: d.scope === 'ip' || d.scope === 'Ip' ? 'Ip' : 'Range',
 					value: d.value,
 					duration: d.duration,
 					scenario: a.scenario ?? 'manual',
@@ -288,18 +329,20 @@ const server = createServer((req, res) => {
 					context: [],
 					events: []
 				});
-				ids.push(alertId);
+				ids.push(String(alertId)); // upstream returns alert-id strings
 			}
 			json(200, ids);
 		});
 		return;
 	}
 
-	// Decision removal (watcher): DELETE /v1/decisions/:id
+	// Decision removal (watcher): DELETE /v1/decisions/:id EXPIRES the
+	// decision (until = now) — it stays visible on the owning alert like a
+	// real LAPI, and returns {"nbDeleted":"1"} (a string).
 	const delMatch = /^\/v1\/decisions\/(\d+)$/.exec(url.pathname);
 	if (delMatch && req.method === 'DELETE') {
 		deletedDecisions.add(Number(delMatch[1]));
-		json(200, { nbDeleted: 1 });
+		json(200, { nbDeleted: '1' });
 		return;
 	}
 
@@ -311,19 +354,27 @@ const server = createServer((req, res) => {
 	const allowMatch = /^\/v1\/allowlists\/check\/(.+)$/.exec(url.pathname);
 	if (allowMatch && req.method === 'GET') {
 		const ip = decodeURIComponent(allowMatch[1]);
-		const covered = ALLOWLISTS.filter((l) => l.items.includes(ip));
-		json(200, { address: ip, allowlists: covered });
+		const covered = ALLOWLISTS.find((l) => l.items.includes(ip));
+		// Real shape: {"allowlisted": true, "reason": "..."} or {}.
+		json(200, covered ? { allowlisted: true, reason: covered.name } : {});
 		return;
 	}
 
 	if (url.pathname === '/v1/alerts' && req.method === 'GET') {
-		// Fixture set + pushed manual decisions, minus any deleted ones —
-		// the projection upserts by upstream id so re-delivery is idempotent.
+		// Fixture set + pushed manual decisions; deleted decisions remain on
+		// their alert with until = now (expiry, not removal — like upstream).
 		const all = [...ALERTS, ...manualAlerts].map((a) => ({
 			...a,
-			decisions: a.decisions.filter((d) => !deletedDecisions.has(d.id))
+			decisions: a.decisions.map((d) =>
+				deletedDecisions.has(d.id) ? { ...d, until: new Date().toISOString() } : d
+			)
 		}));
-		json(200, all);
+		const result = filterAlerts(all, url.searchParams);
+		if (result.error) {
+			json(result.error.status, { message: result.error.message });
+			return;
+		}
+		json(200, result.alerts.length ? result.alerts : null);
 		return;
 	}
 	json(404, { message: 'not found' });

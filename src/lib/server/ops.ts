@@ -9,12 +9,14 @@
  */
 import { mkdirSync, readdirSync, statfsSync, statSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
-import { eq, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { SQLiteTable } from 'drizzle-orm/sqlite-core';
 import type { db } from '#lib/server/db/index.ts';
 import { rawClient } from '#lib/server/db/index.ts';
 import {
+	activityRollup,
 	alert,
+	alertSite,
 	appSetting,
 	audit,
 	decision,
@@ -72,6 +74,10 @@ export interface RetentionPolicy {
 	audit: number;
 	metrics: number;
 	decisionRequests: number;
+	/** Alert cache window (spec §8). */
+	alerts: number;
+	/** Hourly aggregate window (spec §8). */
+	rollups: number;
 }
 
 export const DEFAULT_RETENTION: RetentionPolicy = {
@@ -79,7 +85,9 @@ export const DEFAULT_RETENTION: RetentionPolicy = {
 	jobs: 30,
 	audit: 365,
 	metrics: 30,
-	decisionRequests: 30
+	decisionRequests: 30,
+	alerts: 30,
+	rollups: 90
 };
 
 export async function getRetentionPolicy(database: typeof db): Promise<RetentionPolicy> {
@@ -140,6 +148,42 @@ export async function runRetention(
 		.where(lt(decisionRequest.createdAt, cutoff(p.decisionRequests)))
 		.returning({ id: decisionRequest.id });
 	counts.decisionRequests = reqs.length;
+
+	// Alerts older than the cache window go only when every decision they
+	// carry has expired — an active ban keeps its evidence. Site links and
+	// the (expired-only) decision rows go with the alert.
+	const staleAlerts = await database
+		.select({ upstreamId: alert.upstreamId })
+		.from(alert)
+		.where(
+			and(
+				lt(alert.createdAt, cutoff(p.alerts)),
+				sql`NOT EXISTS (
+					SELECT 1 FROM decision
+					WHERE decision.alert_upstream_id = ${alert.upstreamId}
+					  AND decision.expired = 0
+				)`
+			)
+		);
+	const staleIds = staleAlerts.map((r) => r.upstreamId);
+	counts.alerts = 0;
+	// Chunked — a first prune on a busy server can exceed SQLite's bound-variable limit.
+	for (let i = 0; i < staleIds.length; i += 500) {
+		const chunk = staleIds.slice(i, i + 500);
+		await database.delete(alertSite).where(inArray(alertSite.alertUpstreamId, chunk));
+		await database.delete(decision).where(inArray(decision.alertUpstreamId, chunk));
+		const gone = await database
+			.delete(alert)
+			.where(inArray(alert.upstreamId, chunk))
+			.returning({ id: alert.id });
+		counts.alerts += gone.length;
+	}
+
+	const rolls = await database
+		.delete(activityRollup)
+		.where(lt(activityRollup.hour, cutoff(p.rollups)))
+		.returning({ id: activityRollup.id });
+	counts.activityRollups = rolls.length;
 
 	await setSetting(database, 'retention.lastRun', new Date().toISOString());
 	return counts;

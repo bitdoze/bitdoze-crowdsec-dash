@@ -257,10 +257,15 @@ export async function applyZoneRule(zoneRowId: string): Promise<{ ruleId: string
 	try {
 		const cf = await clientFor(account);
 		const ruleset = await cf.getCustomRules(zone.zoneId);
+		const prior = (ruleset?.rules ?? []).find((r) => r.ref === RULE_REF);
 		const others = (ruleset?.rules ?? []).filter((r) => r.ref !== RULE_REF);
 		const hostnames = JSON.parse(zone.hostnames) as string[];
 		const paths = JSON.parse(zone.paths ?? '[]') as string[];
-		const mine = edgeRule(account.listName, hostnames, zone.action, paths);
+		// Reuse the existing rule id so updates keep a stable identity.
+		const mine = {
+			...edgeRule(account.listName, hostnames, zone.action, paths),
+			...(prior?.id ? { id: prior.id } : {})
+		};
 		const updated = await cf.putCustomRules(zone.zoneId, [...others, mine]);
 		const ruleId = updated.rules.find((r) => r.ref === RULE_REF)?.id ?? '';
 		await db
@@ -308,6 +313,13 @@ export async function setZoneSelection(
 		where: eq(cloudflareZone.id, zoneRowId)
 	});
 	if (!zone) throw new EdgeError('Zone not found', 'state');
+	// `log` is Enterprise-only upstream — reject before writing the selection.
+	if (opts.selected && opts.action === 'log' && !/enterprise/i.test(zone.plan ?? '')) {
+		throw new EdgeError(
+			`Observe (log) needs a Cloudflare Enterprise plan; this zone is on ${zone.plan || 'an unknown plan'}.`,
+			'state'
+		);
+	}
 	await db
 		.update(cloudflareZone)
 		.set({

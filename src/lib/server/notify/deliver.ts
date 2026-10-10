@@ -24,6 +24,7 @@ import {
 } from '#lib/server/db/app.schema.ts';
 import { resolveSecret } from '#lib/server/secrets.ts';
 import { config } from '#lib/server/config.ts';
+import { assertResolvesSafely, isBlockedAddress } from '#lib/server/net-guard.ts';
 
 const encKey = () => resolveSecret('BETTER_AUTH_SECRET', { dataDir: config.dataDir });
 
@@ -74,15 +75,7 @@ export function assertSafeHttpUrl(raw: string): URL {
 	const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
 	if (BLOCKED_HOSTNAMES.has(host))
 		throw new UnsafeDestinationError(`Destination host "${host}" is not allowed.`);
-	const oct = host.split('.').map(Number);
-	const isV4 = oct.length === 4 && oct.every((n) => Number.isInteger(n) && n >= 0 && n <= 255);
-	if (
-		host === '0.0.0.0' ||
-		host === '::1' ||
-		host === '::' ||
-		['fe8', 'fe9', 'fea', 'feb'].includes(host.slice(0, 3)) ||
-		(isV4 && (oct[0] === 127 || (oct[0] === 169 && oct[1] === 254) || oct[0] === 0))
-	)
+	if (isBlockedAddress(host, 'webhook'))
 		throw new UnsafeDestinationError(
 			'Loopback, link-local, and metadata destinations are not allowed.'
 		);
@@ -252,6 +245,10 @@ async function send(channel: ChannelRow, payload: Payload): Promise<void> {
 		});
 		return;
 	}
+	// Re-resolve at send time: the save-time check can't see what the
+	// hostname points at now (DNS rebinding). SMTP is exempt — a local
+	// MTA on loopback/LAN is a legitimate destination.
+	await assertResolvesSafely(r.url!.hostname, 'webhook');
 	await post(r.url!, { headers: r.headers ?? {}, body: r.body ?? '' });
 }
 

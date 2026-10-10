@@ -1,6 +1,8 @@
 # AGENTS.md
 
-Start with `HANDOFF.md`: current state, owner decisions, and the next steps in order.
+Start with `HANDOFF.md`: current state, owner decisions, and the next steps in order. `TRACKING.md` lists review findings, what still needs real-system verification, accepted risks, and the deferred backlog.
+
+Mocks must mirror the real upstream contract, never our client's assumptions: CrowdSec LAPI semantics live in `e2e/lapi-contract.mjs` (shared by `e2e/mock-lapi.mjs` and unit fakes); `e2e/mock-cf.mjs` follows the Cloudflare API docs. Verify upstream behaviour from source/docs before changing either.
 
 ## Commands
 

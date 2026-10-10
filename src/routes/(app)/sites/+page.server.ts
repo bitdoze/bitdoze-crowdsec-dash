@@ -3,7 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.ts';
 import { alert, alertSite, protectionCheck, site } from '#lib/server/db/app.schema.ts';
-import { requirePermission } from '#lib/server/roles.ts';
+import { requirePermission, requireUser } from '#lib/server/roles.ts';
 import { recordAudit } from '#lib/server/audit.ts';
 import { hasPermission } from '#lib/roles.ts';
 import { probeSite } from '#lib/server/protect/detect.ts';
@@ -23,6 +23,7 @@ function validHostname(h: string): boolean {
 }
 
 export const load: PageServerLoad = async (event) => {
+	requireUser(event);
 	const sites = await db.select().from(site).orderBy(site.hostname);
 	// Per-site: latest attributed alert + verified-check count for the row.
 	const lastAlerts = await db

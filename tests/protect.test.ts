@@ -140,6 +140,84 @@ describe('generatePlan', () => {
 		expect(none.content).not.toContain('wordpress');
 	});
 
+	it("nginx conf.d carries only the log format — lua wiring is the package's", () => {
+		const confd = generatePlan({ ...input, proxy: 'nginx' }).find((a) => a.kind === 'access_log')!;
+		expect(confd.title).toBe('nginx conf.d — crowdsec log format');
+		expect(confd.content).toContain('log_format crowdsec');
+		// Every *_by_lua* directive must be commented out — the
+		// crowdsec-nginx-bouncer package ships its own conf.d file, and a
+		// second init_by_lua_block fails `nginx -t`.
+		const uncommented = confd.content
+			.split('\n')
+			.filter((l) => !l.trimStart().startsWith('#'))
+			.join('\n');
+		expect(uncommented).not.toMatch(/_by_lua/);
+		expect(confd.content).toContain('apt install crowdsec-nginx-bouncer');
+	});
+
+	it('nginx bouncer conf carries no inline comments on KEY=VALUE lines', () => {
+		// lua-cs-bouncer's config parser takes value = everything after the
+		// first '=' — an inline '# …' would become part of the API key.
+		const conf = generatePlan({ ...input, proxy: 'nginx' }).find((a) => a.kind === 'bouncer')!;
+		const bad = conf.content
+			.split('\n')
+			.filter((l) => l.trim() !== '' && !l.trimStart().startsWith('#'))
+			.filter((l) => !/^[A-Z_]+=[^#]*$/.test(l));
+		expect(bad).toEqual([]);
+		expect(conf.content).toContain('API_KEY=<bouncer-key>');
+		expect(conf.content).toContain('ENABLED=true');
+	});
+
+	it('caddy splits global options from the per-site handler', () => {
+		const arts = generatePlan({ ...input, proxy: 'caddy' });
+		const global = arts.find((a) => a.kind === 'bouncer')!;
+		expect(global.content).toContain('order crowdsec first');
+		expect(global.content).toContain('crowdsec {');
+		expect(global.content).toContain('api_key <bouncer-key>');
+		expect(global.content).toContain('global options block');
+		// Per-site file: bare handler + log, never credentials.
+		const perSite = arts.find((a) => a.kind === 'access_log')!;
+		expect(perSite.content).not.toContain('api_key');
+		expect(perSite.content).not.toContain('crowdsec {');
+		expect(perSite.content).toContain('crowdsec');
+		expect(perSite.content).toContain('format json');
+	});
+
+	it('caddy real_ip is a global servers block, not a site block', () => {
+		const realIp = generatePlan({ ...input, proxy: 'caddy', cloudflare: true }).find(
+			(a) => a.kind === 'real_ip'
+		)!;
+		expect(realIp.content).toContain('servers {');
+		expect(realIp.content).not.toContain(`${input.hostname} {`);
+		expect(realIp.content).toContain('trusted_proxies static 173.245.48.0/20');
+		expect(realIp.content).toContain('client_ip_headers CF-Connecting-IP');
+		const noCf = generatePlan({ ...input, proxy: 'caddy', cloudflare: false }).find(
+			(a) => a.kind === 'real_ip'
+		)!;
+		expect(noCf.content).toContain('trusted_proxies static private_ranges');
+		expect(noCf.content).not.toContain('client_ip_headers');
+	});
+
+	it('traefik trusted IPs render as a YAML list, not a joined string', () => {
+		const mw = generatePlan({ ...input, proxy: 'traefik', cloudflare: true }).find(
+			(a) => a.kind === 'middleware'
+		)!;
+		expect(mw.content).toContain('forwardedHeadersTrustedIPs:\n');
+		expect(mw.content).toContain('            - "173.245.48.0/20"');
+		expect(mw.content).not.toMatch(/forwardedHeadersTrustedIPs:\s+\S+,/);
+	});
+
+	it('captcha remediation joins profiles with a YAML document separator', () => {
+		const captcha = generatePlan({ ...input, remediationPreset: 'captcha' }).find(
+			(a) => a.kind === 'remediation'
+		)!;
+		expect(captcha.content).toContain('\n---\n');
+		// Two documents: captcha profile, then the default ban profile.
+		expect(captcha.content.split(/^---$/m).filter((d) => d.includes('name:'))).toHaveLength(2);
+		expect(captcha.content).toContain('crowdsecurity/http-crawl-non_statics');
+		expect(captcha.content).not.toContain('http-scan');
+	});
+
 	it('driftHash treats a substituted bouncer key as in-sync', () => {
 		const desired = 'API_URL=http://crowdsec:8080\nAPI_KEY=<bouncer-key>\nlisten: 1\n';
 		const applied = 'API_URL=http://crowdsec:8080\nAPI_KEY=real-issued-key-xyz\nlisten: 1\n';

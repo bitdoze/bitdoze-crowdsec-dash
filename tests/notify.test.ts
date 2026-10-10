@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Webhook delivery re-resolves destinations at send time — give every test
+// hostname a public answer so the guard lets the stubbed fetch through.
+vi.mock('node:dns/promises', () => ({
+	lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }])
+}));
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';

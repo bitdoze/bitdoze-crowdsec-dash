@@ -4,11 +4,12 @@ import { db } from '#lib/server/db/index.ts';
 import { ipDetail, projectionFreshness } from '#lib/server/crowdsec/lists.ts';
 import { buildClient, getBouncerKey, getServer } from '#lib/server/crowdsec/connection.ts';
 import { LapiError } from '#lib/server/crowdsec/client.ts';
-import { requirePermission } from '#lib/server/roles.ts';
+import { requirePermission, requireUser } from '#lib/server/roles.ts';
 import { isPrivateIp } from '#lib/ipaddr.ts';
 import { hasPermission } from '#lib/roles.ts';
 
 export const load: PageServerLoad = async (event) => {
+	requireUser(event);
 	const srv = await getServer(db);
 	const freshness = await projectionFreshness(db);
 	const detail = await ipDetail(db, event.params.ip);
@@ -92,10 +93,8 @@ export const actions: Actions = {
 		const client = await buildClient(db);
 		if (!client) return fail(400, { lookupError: 'Not connected to a LAPI.' });
 		try {
-			const raw = (await client.allowlistCheck(event.params.ip)) as {
-				allowlists?: Array<{ name?: string; id?: string | number; description?: string }>;
-			} | null;
-			return { allowlist: { ip: event.params.ip, raw } };
+			const check = await client.allowlistCheck(event.params.ip);
+			return { allowlist: { ip: event.params.ip, ...check } };
 		} catch (e) {
 			const msg =
 				e instanceof LapiError && e.status === 404

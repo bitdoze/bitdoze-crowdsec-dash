@@ -2,7 +2,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db/index.ts';
 import { cloudflareAccount, cloudflareZone } from '#lib/server/db/app.schema.ts';
 import { enqueue } from '#lib/server/jobs/queue.ts';
-import { requirePermission } from '#lib/server/roles.ts';
+import { requirePermission, requireUser } from '#lib/server/roles.ts';
 import { hasPermission } from '#lib/roles.ts';
 import { recordAudit } from '#lib/server/audit.ts';
 import {
@@ -18,6 +18,7 @@ import {
 } from '#lib/server/cloudflare/accounts.ts';
 
 export const load: PageServerLoad = async (event) => {
+	requireUser(event);
 	const accounts = await db.select().from(cloudflareAccount);
 	const zones = await db.select().from(cloudflareZone);
 	const now = Date.now();

@@ -6,6 +6,7 @@ import { auth, beginSetup } from '#lib/server/auth.ts';
 import { db, migrateDatabase } from '#lib/server/db/index.ts';
 import { user } from '#lib/server/db/auth.schema.ts';
 import { appState } from '#lib/server/state.ts';
+import { config } from '#lib/server/config.ts';
 
 export const init: ServerInit = async () => {
 	await migrateDatabase();
@@ -28,7 +29,27 @@ const handleBetterAuth: Handle = async ({ event, resolve }) => {
 		event.locals.user = session.user;
 	}
 
-	return svelteKitHandler({ event, resolve, auth, building });
+	const response = await svelteKitHandler({ event, resolve, auth, building });
+	try {
+		const headers: Record<string, string> = {
+			'x-content-type-options': 'nosniff',
+			'x-frame-options': 'DENY',
+			'referrer-policy': 'same-origin',
+			'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+			// No script-src: app.html runs an inline theme bootstrap.
+			'content-security-policy':
+				"frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
+			...(config.origin.startsWith('https:')
+				? { 'strict-transport-security': 'max-age=31536000' }
+				: {})
+		};
+		for (const [name, value] of Object.entries(headers)) {
+			if (!response.headers.has(name)) response.headers.set(name, value);
+		}
+	} catch {
+		// Some responses (streams, immutable headers) can't be touched.
+	}
+	return response;
 };
 
 export const handle: Handle = handleBetterAuth;

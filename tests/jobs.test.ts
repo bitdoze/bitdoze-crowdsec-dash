@@ -3,7 +3,7 @@
  * test socket. Covers enqueue/idempotency, lock serialization, step
  * persistence, cancellation, lease reclaim, and rollback.
  */
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
@@ -13,7 +13,16 @@ import path from 'node:path';
 import { eq } from 'drizzle-orm';
 import * as schema from '#lib/server/db/schema.ts';
 import { configArtifact, job, jobStep, site } from '#lib/server/db/app.schema.ts';
-import { claimNext, drainJobs, enqueue, jobDetail, requestCancel } from '#lib/server/jobs/queue.ts';
+import {
+	claimNext,
+	drainJobs,
+	enqueue,
+	jobDetail,
+	LEASE_MS,
+	requestCancel,
+	runClaimed
+} from '#lib/server/jobs/queue.ts';
+import { RUNNERS } from '#lib/server/jobs/runners.ts';
 import { AGENT_SOCKET } from './mocks/app-env-private.ts';
 
 function makeDb() {
@@ -225,6 +234,98 @@ describe('job queue', () => {
 		await claimNext(d, 'w');
 		expect((await detail(d, j.id))!.job.state).toBe('failed');
 	});
+
+	it('a candidate claimed between select and update is not double-claimed', async () => {
+		const d = await db();
+		const { job: j } = await enqueue(d, {
+			kind: 'hub.install',
+			params: { items: ['collections:x/y'] }
+		});
+		// Sabotage the claim update: when the CAS UPDATE's `.returning()` runs,
+		// another worker has already taken the job — the update must then
+		// affect 0 rows and the candidate is skipped.
+		const orig = d.update.bind(d);
+		const wrapped = new Proxy(d, {
+			get: (target, prop) =>
+				prop === 'update'
+					? (table: unknown) => {
+							const b = orig(table as never);
+							return {
+								set: (v: unknown) => {
+									const b2 = (b as { set: (x: unknown) => { where: unknown } }).set(v);
+									return {
+										where: (w: unknown) => {
+											const b3 = (b2 as { where: (x: unknown) => { returning: unknown } }).where(w);
+											return {
+												returning: async (...a: unknown[]) => {
+													await d
+														.update(job)
+														.set({ state: 'running', leasedBy: 'other-worker' })
+														.where(eq(job.id, j.id));
+													return (
+														b3 as { returning: (...x: unknown[]) => Promise<unknown> }
+													).returning(...a);
+												}
+											};
+										}
+									};
+								}
+							};
+						}
+					: typeof target[prop as keyof typeof target] === 'function'
+						? (target[prop as keyof typeof target] as CallableFunction).bind(target)
+						: target[prop as keyof typeof target]
+		}) as typeof d;
+		expect(await claimNext(wrapped, 'w')).toBeNull();
+		const [row] = await d.select().from(job).where(eq(job.id, j.id));
+		expect(row.leasedBy).toBe('other-worker');
+	});
+
+	it('refuses to cancel a running rollback', async () => {
+		const d = await db();
+		const { job: j } = await enqueue(d, {
+			kind: 'hub.install',
+			params: { items: ['collections:x/y'] }
+		});
+		await d
+			.update(job)
+			.set({ state: 'rollback_running', leasedBy: 'w', leaseUntil: new Date(Date.now() + 60000) })
+			.where(eq(job.id, j.id));
+		expect(await requestCancel(d, j.id)).toBe(false);
+		expect((await detail(d, j.id))!.job.state).toBe('rollback_running');
+	});
+
+	it('renews the lease while a long-running step executes', async () => {
+		vi.useFakeTimers();
+		try {
+			const d = await db();
+			let release: (v: string) => void = () => {};
+			RUNNERS['test.slow'] = {
+				plan: async () => [
+					{ name: 'slow op', run: () => new Promise<string>((r) => (release = r)) }
+				]
+			};
+			const { job: j } = await enqueue(d, {
+				kind: 'test.slow',
+				params: {}
+			});
+			const claimed = await claimNext(d, 'w');
+			const run = runClaimed(d, claimed!);
+			// Let the step get going, then advance well past the lease —
+			// heartbeats every LEASE_MS/3 keep it alive.
+			await vi.advanceTimersByTimeAsync(10);
+			await vi.advanceTimersByTimeAsync(LEASE_MS + 5000);
+			const [row] = await d.select().from(job).where(eq(job.id, j.id));
+			expect(row.leaseUntil!.getTime()).toBeGreaterThan(Date.now() + LEASE_MS / 2);
+			release('done');
+			await vi.advanceTimersByTimeAsync(10);
+			await run;
+			expect((await detail(d, j.id))!.job.state).toBe('succeeded');
+		} finally {
+			delete RUNNERS['test.slow'];
+			vi.useRealTimers();
+		}
+	});
 });
 
 describe('config.apply', () => {
@@ -363,7 +464,7 @@ describe('config.apply', () => {
 		const { job: j } = await enqueue(d, {
 			kind: 'config.apply',
 			params: {
-				path: '/etc/nginx/conf.d/crowdsec-bouncer.conf',
+				path: '/etc/nginx/conf.d/crowdsec-dash.conf',
 				content: 'lua_package_path …\n',
 				validateProxy: 'nginx',
 				validateTarget: 'docker:nginx',
@@ -374,8 +475,8 @@ describe('config.apply', () => {
 		const got = await detail(d, j.id);
 		expect(got!.job.state).toBe('succeeded');
 		expect(got!.steps.map((s) => s.name)).toEqual([
-			'backup /etc/nginx/conf.d/crowdsec-bouncer.conf',
-			'write /etc/nginx/conf.d/crowdsec-bouncer.conf',
+			'backup /etc/nginx/conf.d/crowdsec-dash.conf',
+			'write /etc/nginx/conf.d/crowdsec-dash.conf',
 			'validate nginx on docker:nginx',
 			'reload docker:nginx'
 		]);

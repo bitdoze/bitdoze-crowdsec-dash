@@ -148,3 +148,56 @@ test('api keys: mint → REST → MCP → scope enforcement → revoke', async (
 		).status
 	).toBe(401);
 });
+
+test('mcp: transport + origin + version negotiation', async ({ page, request }) => {
+	const key = await mintKey(page, 'operate');
+	const mcp = (body: object, headers: Record<string, string> = {}) =>
+		request.post('http://localhost:4173/mcp', {
+			headers: { authorization: `Bearer ${key}`, ...headers },
+			data: body
+		});
+
+	// SSE-asking GET → 405 with Allow (we answer JSON, no streams).
+	const sseGet = await request.get('http://localhost:4173/mcp', {
+		headers: { accept: 'text/event-stream' }
+	});
+	expect(sseGet.status()).toBe(405);
+	expect(sseGet.headers()['allow']).toContain('POST');
+	// A plain GET still serves the discovery document.
+	const disc = await request.get('http://localhost:4173/mcp');
+	expect(disc.status()).toBe(200);
+	expect((await disc.json()).protocolVersion).toBe('2025-06-18');
+
+	// Foreign Origin → 403 (DNS-rebinding defense).
+	const evil = await mcp(
+		{ jsonrpc: '2.0', id: 1, method: 'ping' },
+		{ origin: 'https://evil.example' }
+	);
+	expect(evil.status()).toBe(403);
+
+	// Version negotiation: supported versions echo back, unsupported fall
+	// back to our latest; the header echoes a supported request header.
+	const legacy = await mcp(
+		{
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'initialize',
+			params: { protocolVersion: '2025-03-26', capabilities: {} }
+		},
+		{ 'mcp-protocol-version': '2025-03-26' }
+	);
+	expect((await legacy.json()).result.protocolVersion).toBe('2025-03-26');
+	expect(legacy.headers()['mcp-protocol-version']).toBe('2025-03-26');
+
+	const ancient = await mcp(
+		{
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'initialize',
+			params: { protocolVersion: '1999-01-01', capabilities: {} }
+		},
+		{ 'mcp-protocol-version': '1999-01-01' }
+	);
+	expect((await ancient.json()).result.protocolVersion).toBe('2025-06-18');
+	expect(ancient.headers()['mcp-protocol-version']).toBe('2025-06-18');
+});

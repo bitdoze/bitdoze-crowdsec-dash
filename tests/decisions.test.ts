@@ -113,18 +113,38 @@ describe('decision requests', () => {
 		await addDecisionRow(db, 777, '8.8.8.8');
 		const res = await requestRemoval(db, okClient(), 777, '8.8.8.8');
 		expect(res.ok).toBe(true);
-		let rows = await db.select().from(decisionRequest);
-		expect(rows[0].state).toBe('removing');
+		// The LAPI expires the decision on delete — the projection mirrors
+		// that immediately, so the request resolves in the same pass.
+		const [proj] = await db.select().from(decision).where(eq(decision.upstreamId, 777));
+		expect(proj.expired).toBe(true);
+		expect(proj.until!.getTime()).toBeLessThanOrEqual(Date.now());
+		expect((await db.select().from(decisionRequest))[0].state).toBe('removed');
+	});
 
-		// projection still has it → stays removing
-		await reconcile(db);
-		expect((await db.select().from(decisionRequest))[0].state).toBe('removing');
+	it('resolves removals even for decisions that never entered the sync window', async () => {
+		// No projection row at all — the upstream delete still resolved the
+		// request: absent counts as gone for upstreamId-keyed removals.
+		const res = await requestRemoval(db, okClient(), 888, '8.8.4.4');
+		expect(res.ok).toBe(true);
+		expect((await db.select().from(decisionRequest))[0].state).toBe('removed');
+	});
 
-		// upstream delete reconciled by sync → removed
-		await db.delete(decision).where(eq(decision.upstreamId, 777));
-		await reconcile(db);
-		rows = await db.select().from(decisionRequest);
-		expect(rows[0].state).toBe('removed');
+	it('marks an empty-id response (all sources allowlisted) as failed', async () => {
+		const client = {
+			pushManualDecision: async () => [],
+			deleteDecision: async () => ({})
+		} as unknown as LapiClient;
+		const res = await requestDecision(db, client, {
+			scope: 'ip',
+			value: '198.51.100.23',
+			type: 'ban',
+			durationS: 60
+		});
+		expect(res.ok).toBe(false);
+		expect(res.error).toContain('allowlist');
+		const rows = await db.select().from(decisionRequest);
+		expect(rows[0].state).toBe('failed');
+		expect(rows[0].error).toContain('allowlist');
 	});
 
 	it('keeps the request on removal failure', async () => {

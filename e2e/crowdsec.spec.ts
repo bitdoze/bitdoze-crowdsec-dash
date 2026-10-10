@@ -65,8 +65,14 @@ test('alerts page lists synced alerts with attribution', async ({ page }) => {
 	await page.goto('/alerts');
 	// Persisted manual-decision alerts are also unattributed — match any.
 	await expect(page.getByRole('cell', { name: 'unattributed' }).first()).toBeVisible();
-	// CAPI-only alert must not appear.
-	await expect(page.getByText('192.0.2.1')).toBeHidden();
+	// CAPI-only alert must not appear (exact match — persisted manual bans
+	// live in the 192.0.2.x range and would substring-match otherwise).
+	await expect(page.getByRole('link', { name: '192.0.2.1', exact: true })).toHaveCount(0);
+	// Nor the simulated fixture — sync passes simulated=false so dry-run
+	// bans never enter the projection (edge sync would enforce them at CF).
+	await expect(page.getByRole('link', { name: '198.51.100.99', exact: true })).toHaveCount(0);
+	await page.goto('/decisions');
+	await expect(page.getByText('198.51.100.99')).toHaveCount(0);
 });
 
 test('filtering by source IP narrows the log', async ({ page }) => {

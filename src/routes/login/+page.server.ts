@@ -5,7 +5,14 @@ import { auth } from '#lib/server/auth.ts';
 import { db } from '#lib/server/db/index.ts';
 import { user } from '#lib/server/db/auth.schema.ts';
 import { sanitizeRedirectTo } from '#lib/server/redirects.ts';
-import { clearLoginFailures, loginRetryAfter, recordLoginFailure } from '#lib/server/throttle.ts';
+import {
+	clearLoginFailures,
+	clearTwoFactorFailures,
+	loginRetryAfter,
+	recordLoginFailure,
+	recordTwoFactorFailure,
+	twoFactorRetryAfter
+} from '#lib/server/throttle.ts';
 import { recordAudit } from '#lib/server/audit.ts';
 
 export const load: PageServerLoad = async (event) => {
@@ -34,7 +41,7 @@ export const actions: Actions = {
 		const redirectTo = sanitizeRedirectTo(formData.get('redirectTo'));
 		const ip = clientIp(event);
 
-		if ((await loginRetryAfter(db, email, ip)) > 0) {
+		if ((await loginRetryAfter(db, email, ip)) > 0 || (await twoFactorRetryAfter(db, ip)) > 0) {
 			await recordAudit({ event, action: 'login.throttled', detail: { email } });
 			return fail(429, {
 				message: 'Too many attempts. Wait a few minutes and try again.',
@@ -72,10 +79,25 @@ export const actions: Actions = {
 		const formData = await event.request.formData();
 		const code = formData.get('code')?.toString() ?? '';
 		const redirectTo = sanitizeRedirectTo(formData.get('redirectTo'));
+		const ip = clientIp(event);
 
+		if ((await twoFactorRetryAfter(db, ip)) > 0) {
+			await recordAudit({ event, action: 'login.throttled', detail: { secondFactor: 'totp' } });
+			return fail(429, {
+				needsTwoFactor: true,
+				message: 'Too many attempts. Wait a few minutes and try again.',
+				redirectTo
+			});
+		}
+
+		let result: { user?: { id: string } } | undefined;
 		try {
-			await auth.api.verifyTOTP({ body: { code }, headers: event.request.headers });
+			result = (await auth.api.verifyTOTP({
+				body: { code },
+				headers: event.request.headers
+			})) as typeof result;
 		} catch {
+			await recordTwoFactorFailure(db, ip);
 			return fail(400, {
 				needsTwoFactor: true,
 				message: 'Invalid code',
@@ -83,9 +105,10 @@ export const actions: Actions = {
 			});
 		}
 
+		await clearTwoFactorFailures(db, ip);
 		await recordAudit({
 			event,
-			subject: event.locals.user?.id ?? null,
+			subject: result?.user?.id ?? null,
 			action: 'login.succeeded',
 			detail: { secondFactor: 'totp' }
 		});
@@ -97,10 +120,25 @@ export const actions: Actions = {
 		const formData = await event.request.formData();
 		const code = formData.get('code')?.toString() ?? '';
 		const redirectTo = sanitizeRedirectTo(formData.get('redirectTo'));
+		const ip = clientIp(event);
 
+		if ((await twoFactorRetryAfter(db, ip)) > 0) {
+			await recordAudit({ event, action: 'login.throttled', detail: { secondFactor: 'backup' } });
+			return fail(429, {
+				needsTwoFactor: true,
+				message: 'Too many attempts. Wait a few minutes and try again.',
+				redirectTo
+			});
+		}
+
+		let result: { user?: { id: string } } | undefined;
 		try {
-			await auth.api.verifyBackupCode({ body: { code }, headers: event.request.headers });
+			result = (await auth.api.verifyBackupCode({
+				body: { code },
+				headers: event.request.headers
+			})) as typeof result;
 		} catch {
+			await recordTwoFactorFailure(db, ip);
 			return fail(400, {
 				needsTwoFactor: true,
 				message: 'Invalid recovery code',
@@ -108,9 +146,10 @@ export const actions: Actions = {
 			});
 		}
 
+		await clearTwoFactorFailures(db, ip);
 		await recordAudit({
 			event,
-			subject: event.locals.user?.id ?? null,
+			subject: result?.user?.id ?? null,
 			action: 'login.succeeded',
 			detail: { secondFactor: 'backup_code' }
 		});

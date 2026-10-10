@@ -175,6 +175,38 @@ test('repeated wrong passwords trigger the application throttle', async ({ page 
 	expect(await other.text()).toContain('Invalid email or password');
 });
 
+test('anonymous page-load data endpoints refuse to run', async ({ browser }) => {
+	// SvelteKit runs page server loads in parallel with the layout's redirect
+	// — without requireUser, /system would reach the host agent and
+	// /decisions would write. The load must abort before doing either.
+	const context = await freshContext(browser);
+	const res = await context.request.get('http://localhost:4173/system/__data.json', {
+		maxRedirects: 0
+	});
+	// SvelteKit serializes a load-time redirect into the data payload — the
+	// key assertion is that no page data was computed or returned.
+	expect(res.status()).toBe(200);
+	const body = await res.json();
+	expect(body.type).toBe('redirect');
+	expect(body.location).toContain('/login');
+	const text = JSON.stringify(body);
+	expect(text).not.toContain('nodeVersion');
+	expect(text).not.toContain('agent');
+	await context.close();
+});
+
+test('responses carry security headers', async ({ page }) => {
+	const res = await page.request.get('http://localhost:4173/login');
+	const h = res.headers();
+	expect(h['x-content-type-options']).toBe('nosniff');
+	expect(h['x-frame-options']).toBe('DENY');
+	expect(h['referrer-policy']).toBe('same-origin');
+	expect(h['content-security-policy']).toContain("frame-ancestors 'none'");
+	expect(h['permissions-policy']).toContain('camera=()');
+	// No HSTS on the http:// e2e origin — it must only appear on https.
+	expect(h['strict-transport-security']).toBeUndefined();
+});
+
 test('sign-out lands on /login (last — invalidates the shared state)', async ({ page }) => {
 	await page.goto('/');
 	await page.getByRole('button', { name: 'Account menu' }).click();

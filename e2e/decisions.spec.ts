@@ -57,7 +57,7 @@ test('manual ban pushes, confirms on sync, then unban reconciles', async ({ page
 	await expect(page.getByRole('link', { name: ip })).toBeVisible();
 
 	// Unban → removing → removed after the next sync drops it.
-	const decisionRow = page.getByRole('row', { name: ipRe }).filter({ hasText: 'manual' });
+	const decisionRow = page.getByRole('row', { name: ipRe }).filter({ hasText: 'cscli' });
 	await decisionRow.getByRole('button', { name: 'Remove' }).click();
 	await expect(page.getByRole('status').filter({ hasText: 'Removal requested' })).toBeVisible();
 	await page.goto('/settings/crowdsec');
@@ -71,7 +71,7 @@ test('allowlist check reports coverage and mechanisms', async ({ page }) => {
 	// 198.51.100.23 is on the mock's "office-egress" centralized allowlist.
 	await page.goto('/ip/198.51.100.23');
 	await page.getByRole('button', { name: 'Check centralized allowlists' }).click();
-	await expect(page.getByText('Covered by 1 centralized allowlist')).toBeVisible();
+	await expect(page.getByText(/Covered by a centralized allowlist/)).toBeVisible();
 	await expect(page.getByText('office-egress')).toBeVisible();
 
 	// A non-allowlisted IP reports an honest negative plus mechanism guidance.

@@ -26,8 +26,10 @@ import {
 import { APP_VERSION } from '#lib/server/ops.ts';
 import { db } from '#lib/server/db/index.ts';
 import type { ApiPrincipal } from '#lib/server/api-keys.ts';
+import { config } from '#lib/server/config.ts';
 
 const PROTOCOL_VERSION = '2025-06-18';
+const SUPPORTED_VERSIONS = [PROTOCOL_VERSION, '2025-03-26'];
 
 const tool = (
 	name: string,
@@ -159,14 +161,20 @@ async function handleRpc(
 	if (id === undefined || id === null) return null;
 
 	switch (method) {
-		case 'initialize':
+		case 'initialize': {
+			// Negotiate: answer the client's version when we speak it, else
+			// our latest (the spec's fallback for unknown versions).
+			const requested = String(
+				(msg.params as { protocolVersion?: unknown } | undefined)?.protocolVersion ?? ''
+			);
 			return ok(id, {
-				protocolVersion: PROTOCOL_VERSION,
+				protocolVersion: SUPPORTED_VERSIONS.includes(requested) ? requested : PROTOCOL_VERSION,
 				capabilities: { tools: { listChanged: false } },
 				serverInfo: { name: 'bitdoze-crowdsec-dash', version: APP_VERSION },
 				instructions:
 					'CrowdSec management dashboard. Read tools always work; ban_ip/unban_ip need an operate-scope key.'
 			});
+		}
 		case 'ping':
 			return ok(id, {});
 		case 'tools/list':
@@ -195,6 +203,20 @@ async function handleRpc(
 }
 
 export const POST: RequestHandler = async (event) => {
+	// DNS-rebinding defense: a page on another origin must not be able to
+	// POST here just because a permissive local resolver points at us.
+	const origin = event.request.headers.get('origin');
+	if (origin) {
+		let bad: boolean;
+		try {
+			// config.origin is verbatim env — may carry a trailing slash.
+			bad = new URL(origin).origin !== new URL(config.origin).origin;
+		} catch {
+			bad = true;
+		}
+		if (bad) return jsonErr(403, 'Origin not allowed.');
+	}
+
 	const auth = await apiAuth(event);
 	if ('response' in auth) return auth.response;
 
@@ -216,19 +238,28 @@ export const POST: RequestHandler = async (event) => {
 	);
 
 	if (replies.length === 0) return new Response(null, { status: 202 });
-	// We only speak PROTOCOL_VERSION — answer with it rather than echoing
-	// whatever version header the client sent.
+	// Echo the negotiated version when the client's header is one we speak.
+	const reqVer = event.request.headers.get('mcp-protocol-version') ?? '';
+	const version = SUPPORTED_VERSIONS.includes(reqVer) ? reqVer : PROTOCOL_VERSION;
 	return Response.json(Array.isArray(body) ? replies : replies[0], {
-		headers: { 'mcp-protocol-version': PROTOCOL_VERSION, 'cache-control': 'no-store' }
+		headers: { 'mcp-protocol-version': version, 'cache-control': 'no-store' }
 	});
 };
 
-/** Discovery-friendly GET: what this endpoint is and how to authenticate. */
-export const GET: RequestHandler = () =>
-	Response.json({
+/**
+ * Streamable HTTP requires GET to answer with text/event-stream or 405 —
+ * we serve no SSE streams, so an SSE-asking client gets a clean 405.
+ * Other GETs get a discovery document.
+ */
+export const GET: RequestHandler = ({ request }) => {
+	if ((request.headers.get('accept') ?? '').includes('text/event-stream')) {
+		return new Response(null, { status: 405, headers: { allow: 'POST' } });
+	}
+	return Response.json({
 		name: 'bitdoze-crowdsec-dash MCP endpoint',
 		transport: 'streamable-http (JSON responses; POST only)',
 		auth: 'Authorization: Bearer csd_… — create keys under Settings → API keys',
 		protocolVersion: PROTOCOL_VERSION,
 		tools: TOOLS.map((t) => t.name)
 	});
+};
