@@ -205,6 +205,15 @@ Verified: `check` 0/0, `npm test` 190, build, `e2e/edge.spec.ts` green incl. CF-
 - **Images:** amd64 + arm64 both built via buildx; amd64 run-smoke native (healthz/setup/healthy), arm64 run-smoke under QEMU binfmt (boot, migrations, `/healthz` 200). No per-proxy images ship — proxy coverage is e2e `mock-bin`.
 - **Remaining:** real edge lifecycle (needs the scoped CF token, owner action below), real-host proxy matrix (needs the Docker host), release-please tag (owner action 1).
 
+### Agent API + MCP (this session — promoted from spec §14)
+
+- **Keys:** `api_key` table (migration 0012); raw key `csd_<base64url>` shown once, sha256 stored. Scope `read`/`operate`, hard-capped by the owner's live role — `authenticateApiKey` re-derives it per request, so demotion/ban takes effect immediately. 25 active keys/user; `lastUsedAt` stamped at most once/min.
+- **REST `/api/v1`:** status, alerts (+:id), decisions (GET + POST ban/captcha + DELETE remove — reuse the UI's `requestDecision`/`requestRemoval` so writes land in `decision_request` and reconcile on sync), sites (+:id), lookup/:ip, notifications. `GET /api/v1` is a public discovery doc. Errors are `{error}` JSON; `ApiError` carries status.
+- **MCP `/mcp`:** Streamable HTTP with plain JSON replies (spec-legal when not streaming): initialize/ping/tools/list/tools/call + batch. Ten tools map 1:1 to `api/v1.ts` ops — same module, same scope enforcement. `GET /mcp` returns a discovery doc.
+- **Rate limit:** in-memory fixed window — 120/min per key, 30/min per anonymous IP.
+- **Deliberately absent:** no `configure` scope (users/keys/CF accounts stay UI-only), no session-cookie auth on API routes (Bearer only).
+- **Verified:** `tests/api-keys.test.ts` (mint/hash/auth/revoke/ban/role-cap/per-user-cap), `e2e/api.spec.ts` (UI mint → REST status → API ban → synced decision readable via MCP → read-key denied on both surfaces → revoke → 401). Docs: `docs/api.md`.
+
 ## Actions only the owner can take
 
 1. GitHub → Settings → Actions → General → enable **"Allow GitHub Actions to create and approve pull requests"**. Release-please fails without it (latest Release run: "GitHub Actions is not permitted to create or approve pull requests").

@@ -574,6 +574,35 @@ export const cloudflareZone = sqliteTable(
 	(table) => [index('cfZone_account_idx').on(table.accountId)]
 );
 
+/**
+ * Per-user API keys for the agent/machine surface (`/api/v1/*` and `/mcp`).
+ * The raw key is shown once at creation; only its sha256 is stored. `scope`
+ * caps what the key may do — the effective permission is also bounded by the
+ * owner's role, so demoting a user weakens their keys automatically.
+ */
+export const apiKey = sqliteTable(
+	'api_key',
+	{
+		id: text('id').primaryKey(),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		name: text('name').notNull(),
+		/** `csd_` + first 8 secret chars — display only, not enough to auth. */
+		prefix: text('prefix').notNull(),
+		keyHash: text('key_hash').notNull().unique(),
+		scope: text('scope', { enum: ['read', 'operate'] })
+			.notNull()
+			.default('read'),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' })
+			.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+			.notNull(),
+		lastUsedAt: integer('last_used_at', { mode: 'timestamp_ms' }),
+		revokedAt: integer('revoked_at', { mode: 'timestamp_ms' })
+	},
+	(table) => [index('apiKey_user_idx').on(table.userId)]
+);
+
 /** Durable key/value app settings — retention policy, update-check cache. */
 export const appSetting = sqliteTable('app_setting', {
 	key: text('key').primaryKey(),

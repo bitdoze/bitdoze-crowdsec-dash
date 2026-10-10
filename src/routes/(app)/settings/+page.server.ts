@@ -1,8 +1,10 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { auth } from '#lib/server/auth.ts';
-import { requireUser } from '#lib/server/roles.ts';
+import { hasPermission, requireUser } from '#lib/server/roles.ts';
 import { recordAudit } from '#lib/server/audit.ts';
+import { createApiKey, listApiKeys, revokeApiKey } from '#lib/server/api-keys.ts';
+import { db } from '#lib/server/db/index.ts';
 
 export const load: PageServerLoad = async (event) => {
 	const user = requireUser(event);
@@ -12,6 +14,8 @@ export const load: PageServerLoad = async (event) => {
 
 	return {
 		user,
+		apiKeys: await listApiKeys(db, user.id),
+		canOperate: hasPermission(user.role, 'operate'),
 		sessions: sessions.map((s) => ({
 			token: s.token,
 			ipAddress: s.ipAddress,
@@ -150,5 +154,48 @@ export const actions: Actions = {
 		} catch {
 			return fail(400, { message: 'Could not revoke the other sessions.' });
 		}
+	},
+
+	/** Mint an API key — the raw value is returned once, never stored. */
+	createKey: async (event) => {
+		const user = requireUser(event);
+		const formData = await event.request.formData();
+		const scope = text(formData, 'scope') === 'operate' ? 'operate' : 'read';
+		if (scope === 'operate' && !hasPermission(user.role, 'operate'))
+			return fail(403, {
+				section: 'apikeys',
+				message: 'Your role cannot mint operate-scope keys.'
+			});
+		try {
+			const { id, raw } = await createApiKey(db, {
+				userId: user.id,
+				name: text(formData, 'name'),
+				scope
+			});
+			await recordAudit({
+				event,
+				action: 'apikey.create',
+				detail: { id, name: text(formData, 'name').trim(), scope }
+			});
+			return { newApiKey: { id, raw, scope } };
+		} catch (e) {
+			return fail(400, {
+				section: 'apikeys',
+				message: e instanceof Error ? e.message : 'Could not create the key.'
+			});
+		}
+	},
+
+	revokeKey: async (event) => {
+		const user = requireUser(event);
+		const formData = await event.request.formData();
+		const res = await revokeApiKey(db, text(formData, 'id'), {
+			id: user.id,
+			isAdmin: hasPermission(user.role, 'configure')
+		});
+		if (res === 'forbidden') return fail(403, { message: 'That key is not yours.' });
+		if (res === 'missing') return fail(404, { message: 'Key not found.' });
+		await recordAudit({ event, action: 'apikey.revoke', detail: { id: text(formData, 'id') } });
+		return { notice: 'Key revoked.' };
 	}
 };

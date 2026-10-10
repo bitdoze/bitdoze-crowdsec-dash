@@ -224,6 +224,86 @@
 		{/if}
 	</Module>
 
+	<Module title="API keys">
+		<p class="mb-3 text-sm text-ink-3">
+			Keys authenticate agents to <code>/api/v1</code> and the <code>/mcp</code> MCP endpoint. An
+			<code>operate</code> key can ban/unban; a key never exceeds your own role — demoting you demotes
+			it too.
+		</p>
+		{#if form?.newApiKey}
+			<div class="mb-3 border border-verified bg-verified-tint p-3" role="status">
+				<p class="text-sm font-semibold text-verified">
+					Copy this key now — it will not be shown again.
+				</p>
+				<CodeBlock code={form.newApiKey.raw} class="mt-2" />
+			</div>
+		{/if}
+		{#if data.apiKeys.length > 0}
+			<div class="mb-4 overflow-x-auto">
+				<table class="w-full text-sm">
+					<thead>
+						<tr class="border-b border-rule-strong text-left">
+							<th class="py-1.5 pr-3 text-xs font-semibold tracking-[0.05em] text-ink-3 uppercase"
+								>Name</th
+							>
+							<th class="py-1.5 pr-3 text-xs font-semibold tracking-[0.05em] text-ink-3 uppercase"
+								>Key</th
+							>
+							<th class="py-1.5 pr-3 text-xs font-semibold tracking-[0.05em] text-ink-3 uppercase"
+								>Scope</th
+							>
+							<th class="py-1.5 pr-3 text-xs font-semibold tracking-[0.05em] text-ink-3 uppercase"
+								>Last used</th
+							>
+							<th class="py-1.5 text-xs font-semibold tracking-[0.05em] text-ink-3 uppercase"
+								><span class="sr-only">Actions</span></th
+							>
+						</tr>
+					</thead>
+					<tbody>
+						{#each data.apiKeys as k (k.id)}
+							<tr class="border-b border-rule last:border-0" class:opacity-50={!!k.revokedAt}>
+								<td class="py-2 pr-3 text-ink-2">
+									{k.name}
+									{#if k.revokedAt}
+										<span
+											class="border-critical bg-critical-tint text-critical ml-2 border px-1 py-px text-xs font-semibold"
+											>revoked</span
+										>
+									{/if}
+								</td>
+								<td class="py-2 pr-3 font-mono text-xs text-ink-3">{k.prefix}…</td>
+								<td class="py-2 pr-3 text-xs text-ink-3">{k.scope}</td>
+								<td class="py-2 pr-3 text-xs whitespace-nowrap text-ink-3"
+									>{k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : 'never'}</td
+								>
+								<td class="py-2 text-right">
+									{#if !k.revokedAt}
+										<form method="post" action="?/revokeKey">
+											<input type="hidden" name="id" value={k.id} />
+											<Button size="sm" type="submit">Revoke</Button>
+										</form>
+									{/if}
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+		<form method="post" action="?/createKey" class="flex flex-wrap items-end gap-4">
+			<Field label="Name" name="name" required maxlength={64} class="w-56" />
+			<label class="flex flex-col gap-1 text-sm">
+				<span class="text-xs font-semibold tracking-[0.05em] text-ink-3 uppercase">Scope</span>
+				<select name="scope" class="bg-surface border border-rule-strong px-2 py-1.5 text-sm">
+					<option value="read">read</option>
+					{#if data.canOperate}<option value="operate">operate</option>{/if}
+				</select>
+			</label>
+			<Button type="submit">Create key</Button>
+		</form>
+	</Module>
+
 	<Module title="Change password">
 		<form method="post" action="?/changePassword" class="flex flex-wrap items-end gap-4">
 			<Field

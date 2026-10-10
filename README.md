@@ -66,6 +66,7 @@ Published image tags: `edge` (main branch), `X.Y.Z` / `X.Y` / `latest`
 - [Compatibility](docs/compatibility.md) — supported matrix, limits
 - [Acceptance matrix](docs/acceptance-matrix.md) — what is verified and how
 - [Benchmarks](docs/benchmarks.md) — methodology and measured numbers
+- [Agent API & MCP](docs/api.md) — `/api/v1` REST + `/mcp`, per-user keys
 - [Proxy integrations](docs/proxies.md)
 - [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 

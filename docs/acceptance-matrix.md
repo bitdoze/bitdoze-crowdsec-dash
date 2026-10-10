@@ -95,6 +95,20 @@ Legend: ✅ verified · ⚠️ partially · ⛔ not yet (needs-env)
 | Worker restart survival                       | drill                | SIGKILL → reboot → outbox delivers, jobs finish, rows intact          | ✅     |
 | DB contention                                 | drill                | WAL reads unaffected; bounded SQLITE_BUSY; recovery clean             | ✅     |
 
+## Agent API & MCP
+
+| Capability                                        | Method            | Expected                                           | Status |
+| ------------------------------------------------- | ----------------- | -------------------------------------------------- | ------ |
+| Key mint/list/revoke (Settings)                   | e2e `api.spec`    | Raw key shown once; sha256 only stored             | ✅     |
+| Bearer auth on `/api/v1` + `/mcp`                 | e2e + unit        | 401 missing/invalid/revoked; banned owner rejected | ✅     |
+| Scope enforcement (read key cannot ban)           | e2e + unit        | 403 REST / `isError` MCP                           | ✅     |
+| Role cap (viewer key never operates)              | unit              | Effective scope downgraded live                    | ✅     |
+| REST reads (status/alerts/decisions/sites/lookup) | e2e               | JSON data, filters honored                         | ✅     |
+| Ban via API → synced projection readable via MCP  | e2e               | `requested` → visible in list_decisions            | ✅     |
+| MCP handshake/tools/list/tools/call               | e2e               | JSON-RPC 2.0, protocol echo, batch support         | ✅     |
+| Rate limiting                                     | in-memory limiter | 120/min per key, 30/min anon IP                    | ✅     |
+| `GET /api/v1` + `GET /mcp` discovery              | e2e               | Public docs; no secrets                            | ✅     |
+
 ## Security surfaces
 
 | Capability                                | Method                  | Expected                                          | Status |
