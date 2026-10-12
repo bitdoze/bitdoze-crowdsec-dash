@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+	decisionLive,
 	filterAlerts,
 	parseGoDuration,
+	signedGoDuration,
 	validateAddAlerts,
 	watcherUAAllowed
 } from '../e2e/lapi-contract.mjs';
@@ -42,6 +44,30 @@ describe('parseGoDuration', () => {
 		for (const bad of ['2026-01-01T00:00:00Z', 'tomorrow', '', '4', '4x', 'abc']) {
 			expect(() => parseGoDuration(bad), bad).toThrow(/while parsing duration/);
 		}
+	});
+});
+
+describe('decisionLive', () => {
+	it('reads the signed remaining duration — the real 1.7.x wire shape', () => {
+		expect(signedGoDuration('-3m15s')).toBe(-195);
+		expect(signedGoDuration('-1s')).toBe(-1);
+		expect(signedGoDuration('158h35m23s')).toBe(570_923);
+		expect(signedGoDuration('bogus')).toBeNull();
+		expect(signedGoDuration('-')).toBeNull();
+		expect(decisionLive({ duration: '2h' })).toBe(true);
+		expect(decisionLive({ duration: '-3m15s' })).toBe(false);
+	});
+
+	it('until wins when present', () => {
+		const future = new Date(Date.now() + 3_600_000).toISOString();
+		const past = '2000-01-01T00:00:00Z';
+		expect(decisionLive({ until: future, duration: '-5m' })).toBe(true);
+		expect(decisionLive({ until: past, duration: '5m' })).toBe(false);
+	});
+
+	it('missing both counts as live — never silently expire', () => {
+		expect(decisionLive({})).toBe(true);
+		expect(decisionLive({ duration: 'not-a-duration' })).toBe(true);
 	});
 });
 
@@ -97,6 +123,20 @@ describe('filterAlerts', () => {
 		});
 		const r = filterAlerts([...list, stale], q('has_active_decision=true'));
 		expect(r.alerts).toHaveLength(2);
+	});
+
+	it('has_active_decision=true reads the signed duration when until is absent', () => {
+		// Real 1.7.6 wire shape: embedded decisions carry duration, no until.
+		const deleted = mkAlert({
+			id: 6,
+			decisions: [{ id: 13, origin: 'crowdsec', type: 'ban', duration: '-3m15s' }]
+		});
+		const live = mkAlert({
+			id: 7,
+			decisions: [{ id: 14, origin: 'crowdsec', type: 'ban', duration: '2h30m' }]
+		});
+		const r = filterAlerts([...list, deleted, live], q('has_active_decision=true'));
+		expect(r.alerts?.map((a: { id: number }) => a.id).sort()).toEqual([2, 3, 7]);
 	});
 
 	it('honors limit and ip filters', () => {

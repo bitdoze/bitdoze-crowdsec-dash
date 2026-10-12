@@ -55,6 +55,8 @@ const baseAlert = (over: Partial<LapiAlert>): LapiAlert => ({
 		latitude: 48.86,
 		longitude: 2.35
 	},
+	// Real 1.7.x wire shape: embedded decisions carry a signed remaining
+	// duration, no `until` (negative once deleted/expired).
 	decisions: [
 		{
 			id: 21,
@@ -64,7 +66,6 @@ const baseAlert = (over: Partial<LapiAlert>): LapiAlert => ({
 			value: '203.0.113.7',
 			duration: '4h',
 			scenario: 'crowdsecurity/http-probing',
-			until: future(4),
 			simulated: false
 		}
 	],
@@ -156,6 +157,30 @@ describe('syncAlerts', () => {
 		const state = await db.select().from(syncState).where(eq(syncState.source, 'alerts'));
 		expect(state[0].lastSuccessAt).toBeTruthy();
 		expect(state[0].partial).toBe(false);
+	});
+
+	it('marks a deleted decision expired — real unban leaves a negative duration', async () => {
+		// cscli decisions delete keeps the decision on the alert with a
+		// negative remaining duration and no until (verified on 1.7.6). An
+		// until-only liveness read would resurrect it as active forever.
+		const deleted = baseAlert({
+			decisions: [
+				{
+					id: 77,
+					origin: 'cscli',
+					type: 'ban',
+					scope: 'Ip',
+					value: '203.0.113.7',
+					duration: '-3m15s',
+					scenario: 'manual'
+				}
+			]
+		});
+		await syncAlerts(db, lapiFake([deleted]));
+		const [row] = await db.select().from(decision).where(eq(decision.upstreamId, 77));
+		expect(row.expired).toBe(true);
+		expect(row.until).toBeNull();
+		expect(row.duration).toBe('-3m15s');
 	});
 
 	it('sends include_capi=false so central alerts never arrive', async () => {

@@ -9,7 +9,10 @@
  * - results order by created_at DESC, id DESC (sort=ASC flips)
  * - limit defaults to 100, no offset
  * - include_capi=false drops alerts carrying CAPI/lists decisions
- * - has_active_decision=true keeps alerts with a decision until >= now
+ * - has_active_decision=true keeps alerts with a live decision: `until` in
+ *   the future when present, else a positive remaining `duration` — real
+ *   1.7.6 embeds signed Go durations ("-3m15s" once deleted/expired) and
+ *   usually no `until` at all (verified live)
  * - POST /v1/alerts validates required fields (→500) and requires labels
  *   to be []string (object labels → 400)
  * - POST /v1/watchers/login requires a `name/version`-shaped User-Agent
@@ -32,6 +35,41 @@ const CENTRAL = new Set(['CAPI', 'lists', 'list']);
  */
 export function watcherUAAllowed(userAgent) {
 	return typeof userAgent === 'string' && userAgent.includes('/');
+}
+
+/**
+ * Signed Go duration → seconds, or null when unparsable. Embedded alert
+ * decisions on real 1.7.x carry a signed remaining `duration` — negative
+ * once deleted/expired ("-3m15s") — and usually no `until` timestamp.
+ */
+export function signedGoDuration(s) {
+	if (typeof s !== 'string' || !s) return null;
+	const negative = s.startsWith('-');
+	const body = negative ? s.slice(1) : s;
+	if (!body) return null;
+	const re = /(\d+)([smhd])/g;
+	let total = 0;
+	let matched = '';
+	let m;
+	while ((m = re.exec(body)) !== null) {
+		matched += m[0];
+		total += Number(m[1]) * { s: 1, m: 60, h: 3600, d: 86400 }[m[2]];
+	}
+	if (matched !== body) return null;
+	return negative ? -total : total;
+}
+
+/**
+ * Whether an embedded decision is live as the wire reports it: `until`
+ * wins when present, else the signed `duration` sign decides. Both missing
+ * → live — matching upstream's own has_active_decision semantics (its DB
+ * knows true expiry; the wire duration is marshaled as remaining time).
+ */
+export function decisionLive(d, now = Date.now()) {
+	const u = ts(d?.until);
+	if (u !== null) return u > now;
+	const secs = signedGoDuration(d?.duration);
+	return secs === null ? true : secs > 0;
 }
 
 /** "90s", "4h30m", "30d", "1h30m" → seconds. Throws on anything else. */
@@ -123,12 +161,7 @@ export function filterAlerts(alerts, searchParams, now = Date.now()) {
 		out = out.filter((a) => !hasCapiDecision(a));
 	}
 	if (searchParams.get('has_active_decision') === 'true') {
-		out = out.filter((a) =>
-			(a.decisions ?? []).some((d) => {
-				const u = ts(d.until);
-				return u !== null && u >= now;
-			})
-		);
+		out = out.filter((a) => (a.decisions ?? []).some((d) => decisionLive(d, now)));
 	}
 	if (searchParams.has('scenario')) {
 		const s = searchParams.get('scenario');

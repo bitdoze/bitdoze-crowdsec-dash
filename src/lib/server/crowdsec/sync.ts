@@ -3,8 +3,9 @@
  *
  * The local tables are a *projection* of upstream state: alerts are upserted
  * by upstream ID, their decision and alert_site rows are replaced wholesale
- * on every re-sync (so decision removals reconcile), and decision expiry is
- * reconciled from `until`. Alerts whose decisions all carry central origins
+ * on every re-sync (so decision removals reconcile), and decision liveness
+ * is reconciled via `decisionLive` (`until` when present, else the signed
+ * `duration` real LAPI sends). Alerts whose decisions all carry central origins
  * (CAPI/lists) are skipped by default — community blocklist volume comes
  * from metrics instead (spec phase 3).
  *
@@ -58,6 +59,44 @@ const ts = (iso: string | undefined | null): Date | null => {
 	const d = new Date(iso);
 	return Number.isNaN(d.getTime()) ? null : d;
 };
+
+/**
+ * Signed Go duration → seconds. Real 1.7.x embeds alert decisions with a
+ * signed remaining `duration` — negative once the decision was deleted or
+ * expired ("-3m15s") — and usually no `until` timestamp at all.
+ */
+function signedDurationSeconds(value: string | null | undefined): number | null {
+	if (!value) return null;
+	const negative = value.startsWith('-');
+	const body = negative ? value.slice(1) : value;
+	if (!body) return null;
+	const units: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400 };
+	const re = /(\d+)([smhd])/g;
+	let total = 0;
+	let matched = '';
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(body)) !== null) {
+		matched += m[0];
+		total += Number(m[1]) * units[m[2]];
+	}
+	if (matched !== body) return null;
+	return negative ? -total : total;
+}
+
+/**
+ * Whether an embedded decision is live. `until` wins when present; real
+ * LAPI usually sends only `duration`, whose sign is the liveness flag.
+ * Both missing → live — never silently expire what can't be classified.
+ */
+export function decisionLive(
+	d: { until?: string | null; duration?: string | null },
+	now = Date.now()
+): boolean {
+	const until = ts(d.until);
+	if (until) return until.getTime() > now;
+	const secs = signedDurationSeconds(d.duration);
+	return secs === null ? true : secs > 0;
+}
 
 async function getSyncRow(database: Db, source: string) {
 	return database.select().from(syncState).where(eq(syncState.source, source)).get();
@@ -187,6 +226,7 @@ async function replaceDecisions(database: Db, a: LapiAlert) {
 	for (const d of a.decisions ?? []) {
 		if (d.id === undefined) continue;
 		const until = ts(d.until);
+		const live = decisionLive(d);
 		await database
 			.insert(decision)
 			.values({
@@ -201,7 +241,7 @@ async function replaceDecisions(database: Db, a: LapiAlert) {
 				duration: d.duration ?? null,
 				scenario: d.scenario ?? a.scenario ?? null,
 				until,
-				expired: until !== null && until.getTime() < Date.now(),
+				expired: !live,
 				syncedAt: new Date()
 			})
 			.onConflictDoUpdate({
@@ -213,9 +253,10 @@ async function replaceDecisions(database: Db, a: LapiAlert) {
 					type: d.type ?? null,
 					scope: d.scope ?? null,
 					value: d.value ?? null,
+					duration: d.duration ?? null,
 					scenario: d.scenario ?? a.scenario ?? null,
 					until: until ? until : undefined,
-					expired: until !== null && until.getTime() < Date.now(),
+					expired: !live,
 					syncedAt: new Date(),
 					alertUpstreamId: a.id!
 				}
@@ -494,8 +535,7 @@ export async function reconcileActiveDecisions(
 		refreshed++;
 		for (const d of a.decisions ?? []) {
 			if (d.id === undefined) continue;
-			const until = ts(d.until);
-			if (until && until.getTime() > now) activeUpstream.add(d.id);
+			if (decisionLive(d, now)) activeUpstream.add(d.id);
 		}
 	}
 

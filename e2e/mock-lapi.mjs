@@ -37,8 +37,7 @@ const ALERTS = [
 				scope: 'Ip',
 				value: '203.0.113.7',
 				duration: '4h',
-				scenario: 'crowdsecurity/http-probing',
-				until: '2999-01-01T00:00:00Z'
+				scenario: 'crowdsecurity/http-probing'
 			}
 		],
 		context: [{ key: 'target_fqdn', value: 'blog.example.com' }],
@@ -62,14 +61,15 @@ const ALERTS = [
 		},
 		decisions: [
 			{
+				// Expired ban — real LAPI carries a negative remaining
+				// duration, no `until`.
 				id: 22,
 				origin: 'crowdsec',
 				type: 'ban',
 				scope: 'Ip',
 				value: '198.51.100.23',
-				duration: '24h',
-				scenario: 'crowdsecurity/ssh-bf',
-				until: '2000-01-01T00:00:00Z'
+				duration: '-24h',
+				scenario: 'crowdsecurity/ssh-bf'
 			}
 		],
 		context: [],
@@ -83,7 +83,9 @@ const ALERTS = [
 		started_at: ago(3),
 		stopped_at: ago(3),
 		source: { scope: 'Ip', value: '192.0.2.1', ip: '192.0.2.1' },
-		decisions: [{ id: 23, origin: 'CAPI', type: 'ban', scope: 'Ip', value: '192.0.2.1' }],
+		decisions: [
+			{ id: 23, origin: 'CAPI', type: 'ban', scope: 'Ip', value: '192.0.2.1', duration: '72h' }
+		],
 		context: [],
 		events: []
 	},
@@ -106,8 +108,7 @@ const ALERTS = [
 				scope: 'Ip',
 				value: '198.51.100.99',
 				duration: '4h',
-				scenario: 'crowdsecurity/http-probing',
-				until: '2999-01-01T00:00:00Z'
+				scenario: 'crowdsecurity/http-probing'
 			}
 		],
 		context: [],
@@ -117,8 +118,9 @@ const ALERTS = [
 
 const METRICS = `# TYPE cs_info gauge
 cs_info{version="v1.7.6-mock"} 1
-cs_active_decisions{action="ban",origin="CAPI",scenario=""} 21286
-cs_active_decisions{action="ban",origin="crowdsec",scenario="crowdsecurity/http-probing"} 1
+# Real 1.7.x labels cs_active_decisions with reason, not scenario.
+cs_active_decisions{action="ban",origin="CAPI",reason="ssh:bruteforce"} 21286
+cs_active_decisions{action="ban",origin="crowdsec",reason="crowdsecurity/http-probing"} 1
 cs_parser_hits_total{source="/var/log/caddy/blog.log"} 1234
 cs_parser_hits_ok_total{source="/var/log/caddy/blog.log"} 1200
 cs_parser_hits_ko_total{source="/var/log/caddy/blog.log"} 34
@@ -319,9 +321,10 @@ const server = createServer((req, res) => {
 					type: d.type,
 					scope: d.scope === 'ip' || d.scope === 'Ip' ? 'Ip' : 'Range',
 					value: d.value,
+					// Real upstream echoes the pushed duration back as the
+					// remaining signed duration — no `until` field.
 					duration: d.duration,
 					scenario: a.scenario ?? 'manual',
-					until: new Date(Date.now() + 4 * 3_600_000).toISOString(),
 					simulated: false
 				}));
 				manualAlerts.push({
@@ -344,8 +347,9 @@ const server = createServer((req, res) => {
 	}
 
 	// Decision removal (watcher): DELETE /v1/decisions/:id EXPIRES the
-	// decision (until = now) — it stays visible on the owning alert like a
-	// real LAPI, and returns {"nbDeleted":"1"} (a string).
+	// decision — it stays visible on the owning alert with a NEGATIVE
+	// remaining duration like a real LAPI (verified on 1.7.6), and returns
+	// {"nbDeleted":"1"} (a string).
 	const delMatch = /^\/v1\/decisions\/(\d+)$/.exec(url.pathname);
 	if (delMatch && req.method === 'DELETE') {
 		deletedDecisions.add(Number(delMatch[1]));
@@ -369,11 +373,12 @@ const server = createServer((req, res) => {
 
 	if (url.pathname === '/v1/alerts' && req.method === 'GET') {
 		// Fixture set + pushed manual decisions; deleted decisions remain on
-		// their alert with until = now (expiry, not removal — like upstream).
+		// their alert with a negative duration (expiry, not removal — like
+		// upstream).
 		const all = [...ALERTS, ...manualAlerts].map((a) => ({
 			...a,
 			decisions: a.decisions.map((d) =>
-				deletedDecisions.has(d.id) ? { ...d, until: new Date().toISOString() } : d
+				deletedDecisions.has(d.id) ? { ...d, until: undefined, duration: '-1s' } : d
 			)
 		}));
 		const result = filterAlerts(all, url.searchParams);

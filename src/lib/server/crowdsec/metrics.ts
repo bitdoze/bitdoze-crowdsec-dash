@@ -42,7 +42,8 @@ const WHITELIST: Record<string, readonly string[]> = {
 	cs_bucket_created_total: ['name', 'instantiation'],
 	cs_lapi_requests_total: ['method', 'endpoint'],
 	cs_lapi_response_codes_total: ['code', 'endpoint'],
-	cs_active_decisions: ['origin', 'action', 'scenario'],
+	// 1.7.x labels this metric with `reason`; older versions used `scenario`.
+	cs_active_decisions: ['origin', 'action', 'scenario', 'reason'],
 	cs_alerts: ['reason'],
 	cs_info: ['version'],
 	cs_appsec_processed_requests_total: ['appsec_engine', 'appsec_rule'],

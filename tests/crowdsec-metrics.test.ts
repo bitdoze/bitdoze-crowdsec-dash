@@ -4,7 +4,8 @@ import { parsePrometheus, summarizeMetrics, whitelisted } from '#lib/server/crow
 const SAMPLE = `
 # HELP cs_active_decisions Number of active decisions.
 # TYPE cs_active_decisions gauge
-cs_active_decisions{action="ban",origin="CAPI",scenario=""} 21286
+# 1.7.x labels this reason; older releases used scenario — both accepted.
+cs_active_decisions{action="ban",origin="CAPI",reason="ssh:bruteforce"} 21286
 cs_active_decisions{action="ban",origin="crowdsec",scenario="crowdsecurity/ssh-bf"} 2
 cs_info{version="v1.7.6"} 1
 cs_parser_hits_total{source="/var/log/auth.log"} 900
