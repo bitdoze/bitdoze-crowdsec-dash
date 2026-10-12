@@ -68,6 +68,29 @@ Published tags: `edge` (main), `X.Y.Z` / `X.Y` / `latest` (releases),
 
 `compose.yaml` runs the same image with a named volume.
 
+### LAPI on loopback, dashboard in Docker
+
+CrowdSec's default install binds LAPI (`127.0.0.1:8080`) and metrics
+(`127.0.0.1:6060`) to loopback, which a bridge-networked container cannot
+reach. Verified options, in order of preference:
+
+1. A tiny TCP forwarder bound **only to the docker network's gateway IP**
+   (e.g. `172.20.0.1:18080 → 127.0.0.1:8080`) — the host firewall stays
+   untouched and the port is unreachable from outside the bridge. The
+   reference deployment runs this as a `network_mode: host` sidecar that
+   binds exclusively to the gateway address; the same sidecar can also
+   forward the AppSec engine (`17422 → 7422`) for the Caddy bouncer.
+2. `network_mode: host` on the dashboard container — simple, but gives up
+   network isolation and DNS-by-service-name.
+3. Rebinding LAPI to `0.0.0.0` — works but exposes the LAPI to the LAN unless
+   additionally firewalled; avoid unless you control the perimeter.
+
+When you register the watcher, remember the real LAPI behaviors the client
+relies on: watcher login requires a `name/version`-shaped `User-Agent`
+(anything else gets the same 401 body as bad credentials), bouncer lookups
+authenticate with `X-Api-Key` (not `Authorization: Bearer`), and the metrics
+URL must include the literal `/metrics` path — it is used verbatim.
+
 ## Host agent (topology D)
 
 `server/agent.js` is a dependency-free Node daemon speaking newline-JSON over a

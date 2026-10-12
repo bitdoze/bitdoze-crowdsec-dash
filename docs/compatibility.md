@@ -4,11 +4,11 @@
 
 | Component                       | Support                                                                      |
 | ------------------------------- | ---------------------------------------------------------------------------- |
-| CrowdSec Security Engine (LAPI) | v1.5+ — alerts, decisions, allowlists, metrics, `cs_info` version            |
-| Caddy                           | Log scanning, bouncer/config snippets via agent                              |
+| CrowdSec Security Engine (LAPI) | v1.5+ — alerts, decisions, allowlists, metrics, `cs_info` version. Verified end-to-end on native **1.7.6** (watcher login, 30-day import, incremental sync, bouncer lookup, ban/unban, allowlist check) |
+| Caddy                           | Log scanning, bouncer/config snippets via agent. Verified on the deployment host with `caddy-crowdsec-bouncer` **v0.14.1** — global `crowdsec {}` + per-site `crowdsec`/`appsec` handlers, streaming + live enforcement |
 | Nginx                           | Log scanning, bouncer/config snippets via agent                              |
 | Traefik                         | Log scanning (access logs), bouncer/config snippets via agent                |
-| CrowdSec AppSec (WAF)           | Scenario/status surfaced; config via agent                                   |
+| CrowdSec AppSec (WAF)           | Scenario/status surfaced; config via agent. Verified on 1.7.6: inband block → alert → ban escalation, `cs_appsec_reqs_total` + `cs_appsec_rule_hits` metrics |
 | Native (systemd) hosts          | Agent `service.reload`, file ops under `AGENT_FILE_ROOTS`                    |
 | Dockerized CrowdSec             | Agent `AGENT_CSCLI=docker:<container>`                                       |
 | Dockerized apps                 | Read-only discovery (`AGENT_DOCKER=1`)                                       |

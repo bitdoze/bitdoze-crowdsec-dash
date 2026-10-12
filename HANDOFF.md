@@ -214,22 +214,64 @@ Verified: `check` 0/0, `npm test` 190, build, `e2e/edge.spec.ts` green incl. CF-
 - **Deliberately absent:** no `configure` scope (users/keys/CF accounts stay UI-only), no session-cookie auth on API routes (Bearer only).
 - **Verified:** `tests/api-keys.test.ts` (mint/hash/auth/revoke/ban/role-cap/per-user-cap), `e2e/api.spec.ts` (UI mint → REST status → API ban → synced decision readable via MCP → read-key denied on both surfaces → revoke → 401). Docs: `docs/api.md`.
 
+### Production deployment + real-host verification (2026-10-12, this session)
+
+The dashboard is live at `crowdsec.ai.bitdoze.com`, deployed per the host's
+`~/docker-apps` convention (`~/docker-apps/crowdsec-dash/compose.yaml` —
+dashboard + `lapi-bridge` sidecar on the external `web` network, local image
+`bitdoze-crowdsec-dash:local`, `127.0.0.1:3000` published, admin created via
+`/setup`). It is connected to the host's native CrowdSec 1.7.6 **without
+changing CrowdSec's config**: named watcher `bitdoze-crowdsec-dash` +
+observer bouncer; LAPI/metrics stay loopback-only and are reached through a
+small TCP bridge bound only to the docker-gateway IP (`172.20.0.1:18080→8080`,
+`16060→6060`, `17422→7422`).
+
+Verified end to end on the real LAPI: watcher login, 30-day import (811
+alerts), incremental sync, metrics scrape (~20k CAPI decisions visible as a
+count), live per-IP bouncer lookup, centralized-allowlist check, and
+dashboard ban→confirmed→unban→removed. `/decisions` is the current-ban view:
+local decisions as rows, CAPI as the aggregate count, `/ip/[ip]` for the full
+enforced set.
+
+Caddy was rebuilt via the repo's own pinned recipe
+(`caddy-crowdsec-bouncer/{http,appsec}@v0.14.1` via xcaddy) — the stock image
+has no module. Global options now carry `order crowdsec first` + `order
+appsec after crowdsec` + `crowdsec { api_url, api_key, appsec_url }`; both
+sites (`arcane.ai.bitdoze.com`, `crowdsec.ai.bitdoze.com`) run per-site
+`crowdsec` + `appsec` + JSON-log imports under
+`~/docker-apps/caddy/crowdsec/`, with matching `acquis.d` files
+(`type: caddy`, `target_fqdn`). AppSec runs `virtual-patching` (WAF level 1)
+on `127.0.0.1:7422`. **All six protection checks verified on both sites**
+except `bypass` (`not_applicable` — host agent not deployed) and the
+`remediation` artifact (`not_applied` — no profiles file written yet).
+
+Six upstream-contract bugs found because the mock encoded client assumptions
+— all fixed on `main` and encoded in `e2e/lapi-contract.mjs` (TRACKING C4,
+H9–H13, M14–M15): watcher-login `name/version` UA gate (undici's `node` UA →
+same 401 as bad credentials), `X-Api-Key` bouncer auth, signed-`duration`
+decision liveness, `reason` labels on `cs_active_decisions`, `start_at`/
+`stop_at` alert keys (not `started_at`), and real AppSec metrics
+(`cs_appsec_reqs_total` + `cs_appsec_rule_hits{type}`). WAF-level semantics
+also corrected: `appsec_configs` entries merge — overlapping configs
+(`virtual-patching` ⊂ `appsec-default`) duplicate rule ids and the engine
+refuses to load; level 1 is `virtual-patching` alone.
+
 ## Actions only the owner can take
 
 1. GitHub → Settings → Actions → General → enable **"Allow GitHub Actions to create and approve pull requests"**. Release-please fails without it (latest Release run: "GitHub Actions is not permitted to create or approve pull requests").
 2. Close Dependabot PR #1 (node 25-slim) and PR #3 (@types/node 26). Node majors are now ignored in `.github/dependabot.yml`. Review PR #2 (@libsql/client 0.18.0) once its CI is green.
 3. Make the GHCR package `bitdoze-crowdsec-dash` public (GitHub → Packages → package settings) so `docker pull` works without login.
-4. Before phase 3 testing against the reference host: approve (or refuse) registering a dashboard watcher machine with `cscli machines add`.
+4. ~~Before phase 3 testing against the reference host: approve (or refuse) registering a dashboard watcher machine~~ — **done** (owner approved; watcher `bitdoze-crowdsec-dash` + observer bouncer registered and verified 2026-10-12).
 
 ## Next steps, in order
 
 ### 1. Release v0.1.0
 
-- All phase-3 code is on `main`. To tag: merge the release-please PR (after owner action 1). Optional but valuable before tagging: reference-host connect (owner action 4 — LAPI/metrics are on 127.0.0.1, so the dashboard needs host networking there).
+- All phase-3 code is on `main` and now verified against the real reference host. To tag: merge the release-please PR (after owner action 1).
 
 ### 2. Real-host validation, then tag the release candidate
 
-Phase 12 is done except the release-candidate publish (needs owner action 1). Phases 7–11 are on `main` with stub-driven e2e; real validation needs a Docker host with the agent (`AGENT_DOCKER=1`, `AGENT_SERVICES` including the proxy targets) — deploy the demo compose, run adopt→apply→validate→reload per proxy, exercise bypass/recreation/failure paths, walk a site through WAF levels 3→4 against real CRS alerts — plus a Cloudflare token scoped `Zone:Read` + `Account Filter Lists:Edit` + `Zone WAF:Edit` on a **test** zone for the real edge lifecycle (token revocation, quota, propagation delay, adopt-existing-list).
+Phase 12 is done except the release-candidate publish (needs owner action 1). **Caddy/Docker is now validated on the real host** (2026-10-12 — see the deployment section above: guided path → all checks verified on two sites, WAF inband block → ban → unban proven). Still open: Traefik + Nginx real-proxy runs, the tier-D host agent (`bypass` check stays `not_applicable` without it), WAF levels 3→4 against real CRS alerts, the `remediation` artifact (no profiles file applied yet), and a Cloudflare token scoped `Zone:Read` + `Account Filter Lists:Edit` + `Zone WAF:Edit` on a **test** zone for the real edge lifecycle (token revocation, quota, propagation delay, adopt-existing-list).
 
 Phase 13 (v1.0.0) is what remains: resolve RC findings, publish the stable release, test RC→stable upgrade + backup restore.
 
@@ -266,6 +308,9 @@ Phase 13 (v1.0.0) is what remains: resolve RC findings, publish the stable relea
 - **Restoring a WAL database:** copying `app.db` over itself while leaving `app.db-wal` replays the _old_ WAL onto the restored file — post-backup writes resurrect. Always remove/replace the `-wal`/`-shm` siblings atomically with the main file.
 - **WAL contention is bounded, not fair:** a writer waiting on `busy_timeout` starves rather than queues when another writer holds the lock past the timeout — expect `SQLITE_BUSY` after ~5 s, not eventual success. The drill asserts the honest semantics.
 - **Stale e2e servers hold `.e2e-data`:** leftover mock-lapi/mock-cf processes keep 8090/8091 and the DB locked — `SQLITE_BUSY` on the next run's purge. Kill by port before rerunning; `e2eDb()` sets a 10 s busy timeout as backstop.
+- **Real 1.7.x wire shapes differ from client assumptions** — verified on the reference host and encoded in `e2e/lapi-contract.mjs` (TRACKING C4, H9–H13, M14–M15): watcher login requires a `name/version`-shaped `User-Agent` (undici's `node` → same 401 as bad credentials); bouncer auth is `X-Api-Key`, not `Bearer`; embedded decisions carry signed `duration` and usually no `until`; `cs_active_decisions` is labelled `reason`; alerts use `start_at`/`stop_at`, not `started_at`; AppSec metrics are `cs_appsec_reqs_total` + `cs_appsec_rule_hits{type}`.
+- **Caddy AppSec:** `appsec_url` in the global block only configures the endpoint — requests never reach the engine without the separate per-site `appsec` directive, and it is unordered (`order appsec after crowdsec`). Also `appsec_configs` entries merge into one ruleset: overlapping configs (`virtual-patching` ⊂ `appsec-default`) duplicate rule ids and the engine refuses to start.
+- **Incremental sync never heals old rows:** known alerts at-or-before the cursor are skipped by design — a one-time projection fix on existing data needs a forced re-import (delete the `sync_state` cursor).
 
 ## How to track progress
 
