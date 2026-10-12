@@ -48,8 +48,8 @@ export interface LapiAlert {
 	leakspeed?: string;
 	simulated?: boolean;
 	remediation?: boolean;
-	started_at?: string;
-	stopped_at?: string;
+	start_at?: string;
+	stop_at?: string;
 	created_at?: string;
 	source?: LapiSource;
 	events?: { timestamp?: string; meta?: LapiKeyValue[] }[];

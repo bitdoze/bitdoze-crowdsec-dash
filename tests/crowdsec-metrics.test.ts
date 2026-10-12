@@ -12,8 +12,10 @@ cs_parser_hits_total{source="/var/log/auth.log"} 900
 cs_parser_hits_ok_total{source="/var/log/auth.log"} 870
 cs_parser_hits_ko_total{source="/var/log/auth.log"} 30
 cs_lapi_requests_total{endpoint="/v1/alerts",method="get"} 44
-cs_appsec_processed_requests_total{appsec_engine="default"} 1200
-cs_appsec_block_hits_total{appsec_engine="default"} 3
+# Real 1.7.x appsec series: reqs_total processed, inband rule_hits blocked.
+cs_appsec_reqs_total{appsec_engine="default",source="127.0.0.1"} 1200
+cs_appsec_rule_hits{appsec_engine="default",rule_name="crowdsecurity/vpatch-x",source="127.0.0.1",type="inband"} 3
+cs_appsec_rule_hits{appsec_engine="default",rule_name="crowdsecurity/experimental-y",source="127.0.0.1",type="outofband"} 9
 cs_bogus_high_cardinality{ip="1.2.3.4",ua="x"} 7
 not a metric line
 `;

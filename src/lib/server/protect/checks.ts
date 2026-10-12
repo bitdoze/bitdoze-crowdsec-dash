@@ -61,7 +61,11 @@ export type CheckResult = {
 type Database = typeof db;
 
 /** Sum of the latest sample per label-set of a counter (counters accumulate). */
-async function metricSum(database: Database, name: string): Promise<number> {
+async function metricSum(
+	database: Database,
+	name: string,
+	keep: (labels: string) => boolean = () => true
+): Promise<number> {
 	const rows = await database
 		.select({ value: metricSample.value, labels: metricSample.labels, at: metricSample.at })
 		.from(metricSample)
@@ -71,6 +75,7 @@ async function metricSum(database: Database, name: string): Promise<number> {
 	const latest = new Map<string, { at: Date; value: number }>();
 	for (const r of rows) {
 		const key = r.labels ?? '';
+		if (!keep(key)) continue;
 		const cur = latest.get(key);
 		if (!cur || r.at > cur.at) latest.set(key, { at: r.at, value: r.value });
 	}
@@ -187,8 +192,12 @@ async function checkDecisionFeed(database: Database): Promise<CheckResult> {
 }
 
 async function checkWaf(database: Database): Promise<CheckResult> {
-	const blocked = await metricSum(database, 'cs_appsec_blocked_requests');
-	const processed = await metricSum(database, 'cs_appsec_processed_requests');
+	// Real 1.7.x metric names: processed requests count is cs_appsec_reqs_total;
+	// inband rule hits on cs_appsec_rule_hits are the blocked requests.
+	const blocked = await metricSum(database, 'cs_appsec_rule_hits', (l) =>
+		l.includes('"type":"inband"')
+	);
+	const processed = await metricSum(database, 'cs_appsec_reqs_total');
 	if (processed <= 0) {
 		return {
 			state: 'not_run',

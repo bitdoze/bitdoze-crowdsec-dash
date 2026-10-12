@@ -195,8 +195,8 @@ async function upsertAlert(database: Db, a: LapiAlert): Promise<{ rowId: string;
 		capacity: a.capacity ?? null,
 		leakspeed: a.leakspeed ?? null,
 		simulated: a.simulated ?? false,
-		startedAt: ts(a.started_at),
-		stoppedAt: ts(a.stopped_at),
+		startedAt: ts(a.start_at),
+		stoppedAt: ts(a.stop_at),
 		createdAt: ts(a.created_at),
 		sourceScope: a.source?.scope ?? null,
 		sourceValue: a.source?.value ?? null,
@@ -296,7 +296,7 @@ async function attachSites(
 
 /** One rollup row per (hour, site|null, scenario, cn); only fresh alerts count. */
 async function rollupAlert(database: Db, a: LapiAlert, siteIds: string[]) {
-	const at = ts(a.stopped_at) ?? ts(a.created_at) ?? new Date();
+	const at = ts(a.stop_at) ?? ts(a.created_at) ?? new Date();
 	const hourMs = Math.floor(at.getTime() / 3_600_000) * 3_600_000;
 	const hour = new Date(hourMs);
 	const targets = siteIds.length ? siteIds : [null];

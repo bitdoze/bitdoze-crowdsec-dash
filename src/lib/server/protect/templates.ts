@@ -141,40 +141,45 @@ sudo systemctl reload crowdsec  # or: docker restart crowdsec
 }
 
 /**
- * AppSec configs per WAF level (spec §5.5). Level 3 runs CRS out-of-band —
- * matches surface as alerts without blocking, which is the gate evidence a
- * site needs before moving to level 4 (in-band CRS).
+ * AppSec configs per WAF level (spec §5.5). Entries are appsec-config item
+ * names written into the `appsec_configs` acquisition list — the engine
+ * merges them, so configs whose rule patterns overlap (e.g. virtual-patching
+ * ⊆ appsec-default) duplicate rule ids and fail to load on a real engine.
+ * Level 3 runs CRS out-of-band — matches surface as alerts without blocking,
+ * which is the gate evidence a site needs before moving to level 4.
  */
 export const WAF_CONFIGS: Record<'1' | '2' | '3' | '4', string[]> = {
-	'1': ['crowdsecurity/appsec-default', 'crowdsecurity/virtual-patching'],
-	'2': [
-		'crowdsecurity/appsec-default',
-		'crowdsecurity/virtual-patching',
-		'crowdsecurity/appsec-generic-rules'
-	],
-	'3': [
-		'crowdsecurity/appsec-default',
-		'crowdsecurity/virtual-patching',
-		'crowdsecurity/appsec-generic-rules',
-		'crowdsecurity/appsec-crs'
-	],
-	'4': [
-		'crowdsecurity/appsec-default',
-		'crowdsecurity/virtual-patching',
-		'crowdsecurity/appsec-generic-rules',
-		'crowdsecurity/appsec-crs-inband'
-	]
+	'1': ['crowdsecurity/virtual-patching'],
+	'2': ['crowdsecurity/appsec-default'],
+	'3': ['crowdsecurity/appsec-default', 'crowdsecurity/appsec-crs'],
+	'4': ['crowdsecurity/appsec-default', 'crowdsecurity/appsec-crs-inband']
 };
 
-/** Extra `cscli collections install` lines the level needs. */
+/**
+ * `cscli collections install` lines the level needs. Rule collections bundle
+ * their appsec-configs on the hub (e.g. appsec-virtual-patching installs the
+ * virtual-patching config + vpatch-* rules), so these are the only installs
+ * required — every pattern in WAF_CONFIGS must match ≥1 installed rule or the
+ * engine refuses to load the acquisition file.
+ */
 function wafCollections(level: PlanInput['wafLevel']): string {
-	if (!level || level === 'off' || level === '1') return '';
+	if (!level || level === 'off') return '';
 	const items =
-		level === '2'
-			? ['crowdsecurity/appsec-generic-rules']
-			: level === '3'
-				? ['crowdsecurity/appsec-generic-rules', 'crowdsecurity/appsec-crs']
-				: ['crowdsecurity/appsec-generic-rules', 'crowdsecurity/appsec-crs-inband'];
+		level === '1'
+			? ['crowdsecurity/appsec-virtual-patching']
+			: level === '2'
+				? ['crowdsecurity/appsec-virtual-patching', 'crowdsecurity/appsec-generic-rules']
+				: level === '3'
+					? [
+							'crowdsecurity/appsec-virtual-patching',
+							'crowdsecurity/appsec-generic-rules',
+							'crowdsecurity/appsec-crs'
+						]
+					: [
+							'crowdsecurity/appsec-virtual-patching',
+							'crowdsecurity/appsec-generic-rules',
+							'crowdsecurity/appsec-crs-inband'
+						];
 	return items.map((i) => `cscli collections install ${i}`).join('\n') + '\n';
 }
 
@@ -286,7 +291,14 @@ function caddy(input: PlanInput): Artifact[] {
 # Per-site file — add one line inside the site's Caddyfile block:
 #     import ${confDir}/${slug}.caddy
 crowdsec   # its LAPI settings live in crowdsec-global.caddy
-log {
+${
+	input.wafLevel === 'off'
+		? ''
+		: `# appsec   # uncomment for inline WAF — the appsec handler is
+# a separate directive; enabling it also needs appsec_url set in
+# crowdsec-global.caddy (they pair together).
+`
+}log {
 	output file ${logPath}
 	format json
 }
@@ -321,10 +333,12 @@ ${input.cloudflare ? '\tclient_ip_headers CF-Connecting-IP\n' : ''}}
 # The stock caddy image does NOT ship the bouncer — use the pinned build in
 # the Compose artifact.
 order crowdsec first
+order appsec after crowdsec   # required: the appsec handler is unordered
 crowdsec {
 	api_url ${input.lapiUrl}
 	api_key <bouncer-key>   # issued by the managed apply job
-	# appsec_url http://crowdsec:7422   # uncomment for inline WAF
+	# appsec_url http://crowdsec:7422   # uncomment for inline WAF — also
+	# needs the site-level appsec directive (see the per-site snippet)
 }
 `
 	};
@@ -337,8 +351,9 @@ crowdsec {
 appsec_configs:
 ${appsecConfigYaml(input)}
 listen_addr: 0.0.0.0:7422
-# Then uncomment appsec_url in the bouncer snippet so Caddy forwards
-# requests for inspection before serving them.
+# Then uncomment appsec_url in the bouncer snippet AND the appsec
+# directive in the per-site snippet so Caddy forwards requests for
+# inspection before serving them.
 `
 	};
 	const compose: Artifact | null =

@@ -13,7 +13,7 @@ const h = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
 const mkAlert = (over: Record<string, unknown> = {}) => ({
 	id: 1,
 	scenario: 'crowdsecurity/http-probing',
-	started_at: h(1),
+	start_at: h(1),
 	created_at: h(1),
 	source: { scope: 'Ip', value: '203.0.113.7', ip: '203.0.113.7' },
 	decisions: [
@@ -73,8 +73,8 @@ describe('decisionLive', () => {
 
 describe('filterAlerts', () => {
 	const list = [
-		mkAlert({ id: 3, created_at: h(1), started_at: h(1) }),
-		mkAlert({ id: 2, created_at: h(2), started_at: h(2) })
+		mkAlert({ id: 3, created_at: h(1), start_at: h(1) }),
+		mkAlert({ id: 2, created_at: h(2), start_at: h(2) })
 	];
 
 	it('rejects an RFC3339 since with a 500-style error', () => {

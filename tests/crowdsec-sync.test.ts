@@ -44,7 +44,7 @@ const baseAlert = (over: Partial<LapiAlert>): LapiAlert => ({
 	id: 1,
 	scenario: 'crowdsecurity/http-probing',
 	message: 'test',
-	started_at: ago(1),
+	start_at: ago(1),
 	created_at: ago(1),
 	source: {
 		scope: 'Ip',
@@ -191,7 +191,7 @@ describe('syncAlerts', () => {
 				baseAlert({
 					id: 2,
 					created_at: ago(2),
-					started_at: ago(2),
+					start_at: ago(2),
 					source: { scope: 'Ip', value: '192.0.2.1', ip: '192.0.2.1' },
 					decisions: [{ id: 22, origin: 'CAPI', type: 'ban', value: '192.0.2.1' }]
 				})
@@ -225,7 +225,7 @@ describe('syncAlerts', () => {
 
 	it('pages backward through created_before without losing alerts', async () => {
 		const batch = Array.from({ length: 5 }, (_, i) =>
-			baseAlert({ id: i + 1, created_at: ago(i + 1), started_at: ago(i + 1) })
+			baseAlert({ id: i + 1, created_at: ago(i + 1), start_at: ago(i + 1) })
 		);
 		const queries: AlertsQuery[] = [];
 		const res = await syncAlerts(db, lapiFake(batch, queries), { pageSize: 2, maxPages: 10 });
@@ -240,10 +240,10 @@ describe('syncAlerts', () => {
 	});
 
 	it('does not re-process alerts already known and older than the cursor', async () => {
-		const stale = baseAlert({ id: 1, created_at: ago(30), started_at: ago(30) });
+		const stale = baseAlert({ id: 1, created_at: ago(30), start_at: ago(30) });
 		await syncAlerts(db, lapiFake([stale]));
 
-		const fresh = baseAlert({ id: 2, created_at: ago(0.1), started_at: ago(0.1) });
+		const fresh = baseAlert({ id: 2, created_at: ago(0.1), start_at: ago(0.1) });
 		const res = await syncAlerts(db, lapiFake([fresh, stale]));
 		// The stale alert was re-fetched (overlap window) but skipped: stored
 		// counts only the new one.
@@ -253,7 +253,7 @@ describe('syncAlerts', () => {
 
 	it('leaves a backfill cursor when the initial import hits maxPages', async () => {
 		const many = Array.from({ length: 5 }, (_, i) =>
-			baseAlert({ id: i + 1, created_at: ago(i + 1), started_at: ago(i + 1) })
+			baseAlert({ id: i + 1, created_at: ago(i + 1), start_at: ago(i + 1) })
 		);
 		const res = await syncAlerts(db, lapiFake(many), { pageSize: 2, maxPages: 1 });
 		expect(res.partial).toBe(true);
@@ -277,14 +277,14 @@ describe('syncAlerts', () => {
 	it('creates a backfill row when an incremental pass hits maxPages', async () => {
 		// First import completes: 3 alerts, cursor at their newest.
 		const initial = Array.from({ length: 3 }, (_, i) =>
-			baseAlert({ id: i + 1, created_at: ago(10 + i), started_at: ago(10 + i) })
+			baseAlert({ id: i + 1, created_at: ago(10 + i), start_at: ago(10 + i) })
 		);
 		await syncAlerts(db, lapiFake(initial));
 
 		// A burst of newer alerts arrives (e.g. after a dashboard outage) —
 		// a capped incremental pass cannot reach the old cursor in one tick.
 		const burst = Array.from({ length: 8 }, (_, i) =>
-			baseAlert({ id: 10 + i, created_at: ago(0.5 + i * 0.5), started_at: ago(0.5 + i * 0.5) })
+			baseAlert({ id: 10 + i, created_at: ago(0.5 + i * 0.5), start_at: ago(0.5 + i * 0.5) })
 		);
 		const all = [...burst, ...initial];
 		const res = await syncAlerts(db, lapiFake(all), { pageSize: 2, maxPages: 1 });
@@ -317,10 +317,10 @@ describe('syncAlerts', () => {
 				? new Date(base + ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
 				: new Date(base + ms).toISOString();
 		const many = [
-			baseAlert({ id: 1, created_at: t(0), started_at: t(0) }),
-			baseAlert({ id: 2, created_at: t(0, true), started_at: t(0, true) }), // "…05Z"
-			baseAlert({ id: 3, created_at: t(0, true), started_at: t(0, true) }), // "…05Z"
-			baseAlert({ id: 4, created_at: t(-90_000), started_at: t(-90_000) })
+			baseAlert({ id: 1, created_at: t(0), start_at: t(0) }),
+			baseAlert({ id: 2, created_at: t(0, true), start_at: t(0, true) }), // "…05Z"
+			baseAlert({ id: 3, created_at: t(0, true), start_at: t(0, true) }), // "…05Z"
+			baseAlert({ id: 4, created_at: t(-90_000), start_at: t(-90_000) })
 		];
 		// The whole pile fits one page — the same-second replay stays a
 		// single overlap page instead of starving the older alert.

@@ -46,9 +46,11 @@ const WHITELIST: Record<string, readonly string[]> = {
 	cs_active_decisions: ['origin', 'action', 'scenario', 'reason'],
 	cs_alerts: ['reason'],
 	cs_info: ['version'],
-	cs_appsec_processed_requests_total: ['appsec_engine', 'appsec_rule'],
-	cs_appsec_block_hits_total: ['appsec_engine'],
-	cs_appsec_rule_hits_total: ['appsec_engine', 'rule_name']
+	// Real 1.7.x names: reqs_total counts processed requests; rule_hits
+	// (no _total suffix) carries a `type="inband"|"outofband"` label — inband
+	// hits are the blocked requests.
+	cs_appsec_reqs_total: ['appsec_engine', 'source'],
+	cs_appsec_rule_hits: ['appsec_engine', 'rule_name', 'source', 'type']
 };
 
 export function whitelisted(point: MetricPoint): boolean {
@@ -99,11 +101,11 @@ export function summarizeMetrics(points: MetricPoint[]): MetricsSummary {
 				acq.set(src, row);
 				break;
 			}
-			case 'cs_appsec_processed_requests_total':
+			case 'cs_appsec_reqs_total':
 				out.appsec.processed += p.value;
 				break;
-			case 'cs_appsec_block_hits_total':
-				out.appsec.blocked += p.value;
+			case 'cs_appsec_rule_hits':
+				if (p.labels.type === 'inband') out.appsec.blocked += p.value;
 				break;
 			case 'cs_lapi_requests_total':
 				out.lapiRequests += p.value;

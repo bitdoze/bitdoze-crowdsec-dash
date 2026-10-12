@@ -147,11 +147,11 @@ export function filterAlerts(alerts, searchParams, now = Date.now()) {
 	let out = [...alerts];
 	if (sinceS !== undefined) {
 		const floor = now - sinceS * 1000;
-		out = out.filter((a) => (ts(a.started_at) ?? ts(a.created_at) ?? 0) >= floor);
+		out = out.filter((a) => (ts(a.start_at) ?? ts(a.created_at) ?? 0) >= floor);
 	}
 	if (untilS !== undefined) {
 		const ceil = now - untilS * 1000;
-		out = out.filter((a) => (ts(a.started_at) ?? ts(a.created_at) ?? 0) <= ceil);
+		out = out.filter((a) => (ts(a.start_at) ?? ts(a.created_at) ?? 0) <= ceil);
 	}
 	if (createdBeforeS !== undefined) {
 		const ceil = now - createdBeforeS * 1000;

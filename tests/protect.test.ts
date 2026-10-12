@@ -98,8 +98,9 @@ describe('generatePlan', () => {
 		const appsecOf = (level: 'off' | '1' | '2' | '3' | '4') =>
 			generatePlan({ ...input, proxy: 'nginx', wafLevel: level }).find((a) => a.kind === 'appsec');
 		expect(appsecOf('1')!.content).toContain('crowdsecurity/virtual-patching');
-		expect(appsecOf('1')!.content).not.toContain('appsec-generic-rules');
-		expect(appsecOf('2')!.content).toContain('appsec-generic-rules');
+		expect(appsecOf('1')!.content).not.toContain('appsec-default');
+		expect(appsecOf('2')!.content).toContain('crowdsecurity/appsec-default');
+		expect(appsecOf('2')!.content).not.toContain('virtual-patching');
 		expect(appsecOf('3')!.content).toContain('crowdsecurity/appsec-crs');
 		expect(appsecOf('3')!.content).not.toContain('appsec-crs-inband');
 		expect(appsecOf('4')!.content).toContain('appsec-crs-inband');
@@ -111,6 +112,10 @@ describe('generatePlan', () => {
 	});
 
 	it('installs the level-matching collections and varies remediation presets', () => {
+		const l1 = generatePlan({ ...input, wafLevel: '1' }).find((a) => a.kind === 'collections')!;
+		expect(l1.content).toContain('cscli collections install crowdsecurity/appsec-virtual-patching');
+		const l2 = generatePlan({ ...input, wafLevel: '2' }).find((a) => a.kind === 'collections')!;
+		expect(l2.content).toContain('appsec-generic-rules');
 		const l3 = generatePlan({ ...input, wafLevel: '3' }).find((a) => a.kind === 'collections')!;
 		expect(l3.content).toContain('appsec-generic-rules');
 		expect(l3.content).toContain('appsec-crs');
@@ -330,13 +335,21 @@ describe('protection checks', () => {
 		const siteId = await addSite(db);
 		let r = await runCheck(db, siteId, 'waf');
 		expect(r.state).toBe('not_run');
+		// Real 1.7.x names: reqs_total processed; inband rule_hits = blocked.
 		await db.insert(metricSample).values([
 			{
 				id: 'm1',
 				at: new Date(),
-				name: 'cs_appsec_processed_requests',
-				labels: '{}',
+				name: 'cs_appsec_reqs_total',
+				labels: '{"appsec_engine":"e","source":"s"}',
 				value: 10
+			},
+			{
+				id: 'm1b',
+				at: new Date(),
+				name: 'cs_appsec_rule_hits',
+				labels: '{"appsec_engine":"e","source":"s","rule_name":"r","type":"outofband"}',
+				value: 4
 			}
 		]);
 		r = await runCheck(db, siteId, 'waf');
@@ -344,8 +357,8 @@ describe('protection checks', () => {
 		await db.insert(metricSample).values({
 			id: 'm2',
 			at: new Date(),
-			name: 'cs_appsec_blocked_requests',
-			labels: '{}',
+			name: 'cs_appsec_rule_hits',
+			labels: '{"appsec_engine":"e","source":"s","rule_name":"r","type":"inband"}',
 			value: 2
 		});
 		r = await runCheck(db, siteId, 'waf');
