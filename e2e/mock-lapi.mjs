@@ -40,7 +40,10 @@ const ALERTS = [
 				scenario: 'crowdsecurity/http-probing'
 			}
 		],
-		context: [{ key: 'target_fqdn', value: 'blog.example.com' }],
+		context: [],
+		// Real 1.7.x lands context-item output (crowdsecurity/http_extended) in
+		// alert.meta as JSON-encoded lists — context itself stays null.
+		meta: [{ key: 'target_fqdn', value: '["blog.example.com"]' }],
 		events: [{ meta: [{ key: 'service', value: 'http' }] }]
 	},
 	{
@@ -194,7 +197,8 @@ const server = createServer((req, res) => {
 				stop_at: new Date().toISOString(),
 				source: { scope: 'Ip', value: ip ?? '203.0.113.99', ip: ip ?? '203.0.113.99' },
 				decisions: [],
-				context: fqdn ? [{ key: 'target_fqdn', value: fqdn }] : [],
+				context: [],
+				meta: fqdn ? [{ key: 'target_fqdn', value: JSON.stringify([fqdn]) }] : [],
 				events: [{ meta: [{ key: 'service', value: 'http' }] }]
 			});
 			json(200, { ok: true });

@@ -1,6 +1,8 @@
 /**
  * Alert → site attribution (spec 5.2). Signals in order of confidence:
- *   1. alert context key `target_fqdn` (crowdsecurity/http_extended)
+ *   1. alert meta key `target_fqdn` — where real 1.7.x puts
+ *      `crowdsecurity/http_extended` context output (JSON-list values);
+ *      `alert.context` kept as a fallback for pushed/older alerts
  *   2. per-event meta `target_fqdn` (parser-set when the log carries a host)
  *   3. `datasource_path` / container name mapped to a known site — only when
  *      the mapping is unambiguous (the datasource belongs to exactly one site)
@@ -24,6 +26,23 @@ const kvValue = (list: LapiKeyValue[] | undefined | null, key: string): string |
 		if (kv.key === key && kv.value) return kv.value;
 	}
 	return null;
+};
+
+/**
+ * Alert `meta` values are aggregated lists JSON-encoded as a single string
+ * (`["a.example.com","b.example.com"]`). Returns every element, falling back
+ * to the raw string for non-JSON values.
+ */
+const metaValues = (list: LapiKeyValue[] | undefined | null, key: string): string[] => {
+	const raw = kvValue(list, key);
+	if (!raw) return [];
+	if (!raw.startsWith('[')) return [raw];
+	try {
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string') : [raw];
+	} catch {
+		return [raw];
+	}
 };
 
 /** Merge all events' meta into one key list (first value wins per key). */
@@ -51,8 +70,12 @@ export interface DatasourceMap {
 export function attributeAlert(alert: LapiAlert, map: DatasourceMap): Attribution[] {
 	const hostnames = new Map<string, Attribution>();
 
+	for (const fqdn of metaValues(alert.meta, 'target_fqdn')) {
+		const h = normalize(fqdn);
+		if (!hostnames.has(h)) hostnames.set(h, { hostname: h, signal: 'context' });
+	}
 	const fromContext = kvValue(alert.context, 'target_fqdn');
-	if (fromContext)
+	if (fromContext && !hostnames.has(normalize(fromContext)))
 		hostnames.set(normalize(fromContext), { hostname: normalize(fromContext), signal: 'context' });
 
 	const meta = mergedEventMeta(alert);

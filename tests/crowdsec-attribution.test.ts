@@ -11,13 +11,34 @@ const base: LapiAlert = { id: 1 };
 const empty: DatasourceMap = { pathPrefix: [] };
 
 describe('attributeAlert', () => {
-	it('uses context target_fqdn with the context signal', () => {
+	it('reads target_fqdn from alert meta with the context signal', () => {
 		const a: LapiAlert = {
 			...base,
-			context: [{ key: 'target_fqdn', value: 'Blog.Example.com' }]
+			meta: [{ key: 'target_fqdn', value: '["Blog.Example.com"]' }]
 		};
 		const hits = attributeAlert(a, empty);
 		expect(hits).toEqual([{ hostname: 'blog.example.com', signal: 'context' }]);
+	});
+
+	it('decodes every fqdn in an aggregated meta list', () => {
+		const a: LapiAlert = {
+			...base,
+			meta: [{ key: 'target_fqdn', value: '["a.example.com","b.example.com"]' }]
+		};
+		expect(attributeAlert(a, empty)).toEqual([
+			{ hostname: 'a.example.com', signal: 'context' },
+			{ hostname: 'b.example.com', signal: 'context' }
+		]);
+	});
+
+	it('falls back to alert context for pushed/older alerts', () => {
+		const a: LapiAlert = {
+			...base,
+			context: [{ key: 'target_fqdn', value: 'Legacy.Example.com' }]
+		};
+		expect(attributeAlert(a, empty)).toEqual([
+			{ hostname: 'legacy.example.com', signal: 'context' }
+		]);
 	});
 
 	it('falls back to event meta when context has no fqdn', () => {
@@ -36,7 +57,7 @@ describe('attributeAlert', () => {
 	it('collects distinct hostnames across signals', () => {
 		const a: LapiAlert = {
 			...base,
-			context: [{ key: 'target_fqdn', value: 'a.example.com' }],
+			meta: [{ key: 'target_fqdn', value: '["a.example.com"]' }],
 			events: [{ meta: [{ key: 'target_fqdn', value: 'b.example.com' }] }]
 		};
 		expect(attributeAlert(a, empty)).toHaveLength(2);
@@ -55,7 +76,7 @@ describe('attributeAlert', () => {
 		]);
 		const withFqdn: LapiAlert = {
 			...withDs,
-			context: [{ key: 'target_fqdn', value: 'x.example.com' }]
+			meta: [{ key: 'target_fqdn', value: '["x.example.com"]' }]
 		};
 		expect(attributeAlert(withFqdn, map).every((h) => h.signal !== 'datasource')).toBe(true);
 	});

@@ -69,7 +69,8 @@ const baseAlert = (over: Partial<LapiAlert>): LapiAlert => ({
 			simulated: false
 		}
 	],
-	context: [{ key: 'target_fqdn', value: 'blog.example.com' }],
+	context: [],
+	meta: [{ key: 'target_fqdn', value: '["blog.example.com"]' }],
 	events: [{ meta: [{ key: 'service', value: 'http' }] }],
 	...over
 });
@@ -355,7 +356,7 @@ describe('syncAlerts', () => {
 		const siteId = await addSite(db, 'blog.example.com', ['admin.blog.example.com']);
 		const a = baseAlert({
 			id: 9,
-			context: [{ key: 'target_fqdn', value: 'admin.blog.example.com' }]
+			meta: [{ key: 'target_fqdn', value: '["admin.blog.example.com"]' }]
 		});
 		await syncAlerts(db, lapiFake([a]));
 		const links = await db.select().from(alertSite);

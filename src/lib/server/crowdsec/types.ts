@@ -55,6 +55,10 @@ export interface LapiAlert {
 	events?: { timestamp?: string; meta?: LapiKeyValue[] }[];
 	decisions?: LapiDecision[];
 	context?: LapiKeyValue[];
+	/** Alert-level context output — real 1.7.x lands `crowdsecurity/*_extended`
+	 * evaluations here (values are JSON-encoded lists: `["host"]`), while the
+	 * `context` field stays null. */
+	meta?: LapiKeyValue[];
 	labels?: LapiKeyValue[] | null;
 }
 
