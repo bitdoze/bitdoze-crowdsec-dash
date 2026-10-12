@@ -227,11 +227,26 @@ small TCP bridge bound only to the docker-gateway IP (`172.20.0.1:18080→8080`,
 `16060→6060`, `17422→7422`).
 
 Verified end to end on the real LAPI: watcher login, 30-day import (811
-alerts), incremental sync, metrics scrape (~20k CAPI decisions visible as a
-count), live per-IP bouncer lookup, centralized-allowlist check, and
-dashboard ban→confirmed→unban→removed. `/decisions` is the current-ban view:
-local decisions as rows, CAPI as the aggregate count, `/ip/[ip]` for the full
-enforced set.
+alerts), incremental sync, metrics scrape, live per-IP bouncer lookup,
+centralized-allowlist check, and dashboard ban→confirmed→unban→removed.
+`/decisions` now shows the **live enforced feed** (`Enforced decisions —
+live`) — the real bouncer `/v1/decisions` stream (~19.7k rows, mostly CAPI
+`ban` decisions) with type/origin/scenario/remaining per row, search mapped
+to the real upstream filters, offset paging, `sim` badges on simulated
+rows, and Remove only for local origins (CAPI stays `central`). The local
+projection + request ledger sit below it; `/ip/[ip]` stays the per-address
+enforcement lookup.
+
+Site detail pages show a **Traffic — access log** module: requests, bytes,
+unique IPs, 4xx+5xx share, avg latency, per-hour volume chart, top IPs and
+top paths (1h/24h/7d), parsed live from the site's Caddy JSON log
+(`${ACCESS_LOG_DIR}/<hostname>.log`, default `/var/log/proxy`). Deployment:
+mount the log dir read-only and give the container read access — Caddy
+writes logs `root:root 0600`, so the compose uses `group_add: [adm]` +
+`mode 0640` in the site's `log { output file … }` block + a setgid `adm`
+log dir (default ACLs don't help: files created `0600` mask named entries
+to nothing). No log file → honest `no_log` state; tail reads cap at 24 MB
+with a `truncated` marker.
 
 Caddy was rebuilt via the repo's own pinned recipe
 (`caddy-crowdsec-bouncer/{http,appsec}@v0.14.1` via xcaddy) — the stock image
@@ -311,6 +326,7 @@ Phase 13 (v1.0.0) is what remains: resolve RC findings, publish the stable relea
 - **Real 1.7.x wire shapes differ from client assumptions** — verified on the reference host and encoded in `e2e/lapi-contract.mjs` (TRACKING C4, H9–H13, M14–M15): watcher login requires a `name/version`-shaped `User-Agent` (undici's `node` → same 401 as bad credentials); bouncer auth is `X-Api-Key`, not `Bearer`; embedded decisions carry signed `duration` and usually no `until`; `cs_active_decisions` is labelled `reason`; alerts use `start_at`/`stop_at`, not `started_at`; AppSec metrics are `cs_appsec_reqs_total` + `cs_appsec_rule_hits{type}`.
 - **Caddy AppSec:** `appsec_url` in the global block only configures the endpoint — requests never reach the engine without the separate per-site `appsec` directive, and it is unordered (`order appsec after crowdsec`). Also `appsec_configs` entries merge into one ruleset: overlapping configs (`virtual-patching` ⊂ `appsec-default`) duplicate rule ids and the engine refuses to start.
 - **Incremental sync never heals old rows:** known alerts at-or-before the cursor are skipped by design — a one-time projection fix on existing data needs a forced re-import (delete the `sync_state` cursor).
+- **Caddy access logs are `root:root 0600`:** the container's `node` user can't read them for the Traffic view. `mode 0640` in `log { output file … }` + `chgrp adm` + setgid on the log dir + `group_add: [adm]` solves it durably; a default ACL does NOT — files created `0600` get `mask:---`, making named entries ineffective.
 
 ## How to track progress
 

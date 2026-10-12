@@ -9,8 +9,16 @@ services:
       - '127.0.0.1:3000:3000'
     volumes:
       - csdash-data:/data
+      # Optional: per-site proxy access logs (Caddy JSON) for the site
+      # Traffic view. Uncomment and see docs/deployment.md for the file-
+      # permission recipe — proxy logs are typically root:root 0600.
+      # - /var/log/proxy:/var/log/proxy:ro
     environment:
       ORIGIN: ${ORIGIN:-http://localhost:3000}
+      # ACCESS_LOG_DIR: /var/log/proxy
+    # Read-only access to group-readable proxy logs (setgid dir + mode
+    # 0640 in Caddy's `log { output file … }` block). See deployment docs.
+    # group_add: [adm]
     restart: unless-stopped
 
   # Native CrowdSec on the same host: its LAPI listens on 127.0.0.1:8080,

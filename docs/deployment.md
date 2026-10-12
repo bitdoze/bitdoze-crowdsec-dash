@@ -131,3 +131,22 @@ the community blocklist is never pushed (free-plan capacity).
 Worker-bouncer mode (topology F) is a downloadable YAML artifact from `/edge`
 with `<cf-token>`/`<bouncer-key>` placeholders — secrets are never embedded.
 It is fail-closed by design and marked advanced in the UI.
+
+## Site traffic view (access logs)
+
+Site detail pages show request/byte/IP statistics parsed from the site's
+proxy access log (`${ACCESS_LOG_DIR}/<hostname>.log`, default
+`/var/log/proxy`, Caddy JSON — the same file the `access_log` artifact and
+CrowdSec acquisition use). To feed it:
+
+1. Mount the host's log dir read-only into the container
+   (`- /var/log/proxy:/var/log/proxy:ro`).
+2. Give the container's `node` user read access — Caddy writes logs
+   `root:root 0600`. Durable recipe: `mode 0640` inside the site's
+   `log { output file … }` block, `chgrp adm` + `chmod 2750` on the log dir
+   (setgid → new files inherit the group), and `group_add: [adm]` on the
+   service. POSIX default ACLs do NOT work here — a file created with mode
+   `0600` gets `mask:---`, which nullifies named ACL entries.
+3. Missing/unreadable log → the module honestly reports `no_log`; reads are
+   tail-capped at 24 MB and report `truncated` when the cap cuts inside the
+   selected window.

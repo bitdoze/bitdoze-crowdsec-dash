@@ -26,6 +26,7 @@ import { downsample } from '#lib/activity.ts';
 import { agentHello, callAgent } from '#lib/server/agent/client.ts';
 import { enqueue } from '#lib/server/jobs/queue.ts';
 import { discoverTraefik, matchSite, parseDockerPs } from '#lib/server/protect/traefik.ts';
+import { loadSiteTraffic, TRAFFIC_RANGES, type TrafficRange } from '#lib/server/sites/traffic.ts';
 
 const PROXIES = ['caddy', 'traefik', 'nginx', 'other', 'unknown'] as const;
 const RUNTIMES = ['native', 'docker', 'unknown'] as const;
@@ -74,7 +75,10 @@ export const load: PageServerLoad = async (event) => {
 	const ACT_RANGES = { '24h': 24 * 3600_000, '7d': 7 * 24 * 3600_000, '30d': 30 * 24 * 3600_000 };
 	const rangeKey = (event.url.searchParams.get('actRange') ?? '7d') as keyof typeof ACT_RANGES;
 	const actRange = ACT_RANGES[rangeKey] ? rangeKey : '7d';
-	const [recent, rollup, crs] = await Promise.all([
+	// Access-log traffic stats — same file CrowdSec tails for acquisition.
+	const trafficRange = (event.url.searchParams.get('twin') ?? '24h') as TrafficRange;
+	const [traffic, recent, rollup, crs] = await Promise.all([
+		loadSiteTraffic(s.hostname, TRAFFIC_RANGES[trafficRange] ? trafficRange : '24h'),
 		db
 			.select({
 				upstreamId: alert.upstreamId,
@@ -110,6 +114,7 @@ export const load: PageServerLoad = async (event) => {
 		exclusions: parseCollections(s.appsecExclusions),
 		detection,
 		proxyRoots,
+		traffic,
 		crsAlerts: crs[0]?.n ?? 0,
 		activity: {
 			range: actRange,

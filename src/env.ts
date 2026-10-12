@@ -28,6 +28,11 @@ export const variables = defineEnvVars({
 		description: 'Directory with drizzle-kit migrations, applied at startup.',
 		schema: (value) => value ?? './drizzle'
 	},
+	ACCESS_LOG_DIR: {
+		description:
+			'Directory holding the per-site proxy access logs (`<hostname>.log`, Caddy JSON format) for the site traffic view. Mount the proxy log dir read-only in the container. Defaults to /var/log/proxy.',
+		schema: (value) => value ?? '/var/log/proxy'
+	},
 	TRUSTED_PROXIES: {
 		description:
 			'Comma-separated reverse-proxy IPs allowed to supply x-forwarded-for, or `*` when the process is only reachable through a proxy. Unset = the socket address is always the client IP. Read by server/index.js.',

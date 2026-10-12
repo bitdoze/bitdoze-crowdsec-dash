@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { ensureConnected } from './helpers.ts';
 
 const MOCK = 'http://127.0.0.1:8090';
@@ -175,4 +176,44 @@ test('sites: two topologies share the decision feed a ban lands on', async ({ pa
 	await page.goto('/decisions');
 	// Live feed + local projection both link the ban — assert one visible.
 	await expect(page.getByRole('link', { name: banIp }).first()).toBeVisible();
+});
+
+test('sites: traffic stats are parsed from the site access log', async ({ page }) => {
+	// The production server reads ACCESS_LOG_DIR (`.e2e-data/proxy-logs` in
+	// e2e) — a spec-written JSON log stands in for the Caddy access log the
+	// access_log artifact would produce.
+	const logDir = '.e2e-data/proxy-logs';
+	const host = `e2e-traffic-${Date.now() % 100000}.example.com`;
+	const nowSec = Date.now() / 1000;
+	const line = (ts: number, ip: string, uri: string, status = 200, size = 2048) =>
+		JSON.stringify({
+			ts,
+			request: { remote_ip: ip, client_ip: ip, method: 'GET', host, uri },
+			status,
+			size,
+			duration: 0.02
+		});
+	mkdirSync(logDir, { recursive: true });
+	writeFileSync(
+		`${logDir}/${host}.log`,
+		[
+			line(nowSec - 10, '203.0.113.51', '/'),
+			line(nowSec - 20, '203.0.113.51', '/'),
+			line(nowSec - 30, '198.51.100.77', '/login?next=/', 404, 512)
+		].join('\n') + '\n'
+	);
+
+	await page.goto('/sites');
+	await page.getByLabel('Hostname').fill(host);
+	await page.getByRole('button', { name: 'Add site' }).click();
+	await expect(page.getByRole('status').first()).toContainText('added');
+	await page.getByRole('link', { name: host }).click();
+
+	// Traffic module renders the parsed aggregates.
+	await expect(page.getByText('Traffic — access log')).toBeVisible();
+	await expect(page.getByText('Requests').locator('..').getByText('3')).toBeVisible();
+	await expect(page.getByText('Unique IPs').locator('..').getByText('2')).toBeVisible();
+	await expect(page.getByRole('cell', { name: '203.0.113.51' })).toBeVisible();
+	await expect(page.getByRole('cell', { name: '/login', exact: true })).toBeVisible();
+	await expect(page.getByText('33.3%')).toBeVisible(); // one 404 of three
 });

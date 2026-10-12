@@ -68,6 +68,21 @@
 			decisions: 0
 		}))
 	);
+	// Access-log traffic — same range-chip pattern as alerts activity.
+	const trafficLabel = $derived(data.traffic.range === '7d' ? dayLabel : bucketHourLabel);
+	const trafficPoints = $derived(
+		data.traffic.buckets.map((b) => ({
+			at: new Date(b.at).toISOString(),
+			alerts: b.total,
+			decisions: 0
+		}))
+	);
+	const fmtBytes = (n: number) => {
+		if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
+		if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
+		if (n >= 1e3) return `${(n / 1e3).toFixed(1)} KB`;
+		return `${n} B`;
+	};
 </script>
 
 <svelte:head><title>{data.site.hostname} · Sites · CrowdSec Dash</title></svelte:head>
@@ -450,6 +465,121 @@
 				{/if}
 			</div>
 		</div>
+	</Module>
+
+	<Module title="Traffic — access log">
+		<p class="mb-3 text-xs text-ink-3">
+			Parsed from <span class="font-mono">{data.traffic.file}</span> — the same JSON log CrowdSec
+			tails for this site.
+			{#if data.traffic.truncated}
+				<span class="text-stale">
+					(log tail cap reached — counts below are a lower bound for the range)</span
+				>
+			{/if}
+		</p>
+		{#if data.traffic.state === 'no_log'}
+			<p class="text-sm text-ink-3">
+				No access log at <span class="font-mono">{data.traffic.file}</span> yet — apply the site's
+				<span class="font-mono">access_log</span> artifact (Caddy JSON log) and traffic stats appear here.
+			</p>
+		{:else if data.traffic.state === 'error'}
+			<p class="text-sm text-failed">Could not read the access log: {data.traffic.error}</p>
+		{:else if !data.traffic.requests}
+			<p class="text-sm text-ink-3">No requests logged in the selected range.</p>
+		{:else}
+			<div class="mb-3 flex items-center gap-1 text-[11px]">
+				{#each ['1h', '24h', '7d'] as r (r)}
+					<!-- eslint-disable svelte/no-navigation-without-resolve -->
+					<a
+						href={resolve('/(app)/sites/[id]', { id: data.site.id }) + `?twin=${r}`}
+						data-sveltekit-noscroll
+						class="rounded-[3px] border px-2 py-0.5 {data.traffic.range === r
+							? 'border-accent-outline text-accent'
+							: 'border-line text-ink-3 hover:text-ink-2'}">{r}</a
+					>
+					<!-- eslint-enable svelte/no-navigation-without-resolve -->
+				{/each}
+				<span class="ml-1 text-ink-3">requests per hour</span>
+			</div>
+			<div class="mb-4 grid grid-cols-2 gap-px border border-rule bg-rule sm:grid-cols-5">
+				<div class="bg-sheet px-3 py-2">
+					<p class="text-[11px] text-ink-3">Requests</p>
+					<p class="font-mono text-lg tabular-nums">{data.traffic.requests.toLocaleString()}</p>
+				</div>
+				<div class="bg-sheet px-3 py-2">
+					<p class="text-[11px] text-ink-3">Traffic</p>
+					<p class="font-mono text-lg tabular-nums">{fmtBytes(data.traffic.bytes)}</p>
+				</div>
+				<div class="bg-sheet px-3 py-2">
+					<p class="text-[11px] text-ink-3">Unique IPs</p>
+					<p class="font-mono text-lg tabular-nums">{data.traffic.uniqueIps.toLocaleString()}</p>
+				</div>
+				<div class="bg-sheet px-3 py-2">
+					<p class="text-[11px] text-ink-3">4xx+5xx</p>
+					<p
+						class="font-mono text-lg tabular-nums {data.traffic.errorRate > 0.05
+							? 'text-failed'
+							: ''}"
+					>
+						{(data.traffic.errorRate * 100).toFixed(1)}%
+					</p>
+				</div>
+				<div class="bg-sheet px-3 py-2">
+					<p class="text-[11px] text-ink-3">Avg response</p>
+					<p class="font-mono text-lg tabular-nums">
+						{data.traffic.avgMs === null ? '—' : `${data.traffic.avgMs.toFixed(0)} ms`}
+					</p>
+				</div>
+			</div>
+			<div class="grid gap-4 lg:grid-cols-2">
+				<div class="min-w-0">
+					<ActivityChart data={trafficPoints} xLabel={trafficLabel} tickStride={6} />
+					<p class="mt-1 text-xs text-ink-3">
+						Statuses: {data.traffic.byStatus.s2xx.toLocaleString()} 2xx · {data.traffic.byStatus.s3xx.toLocaleString()}
+						3xx ·
+						<span class={data.traffic.byStatus.s4xx ? 'text-stale' : ''}
+							>{data.traffic.byStatus.s4xx.toLocaleString()} 4xx</span
+						>
+						·
+						<span class={data.traffic.byStatus.s5xx ? 'text-failed' : ''}
+							>{data.traffic.byStatus.s5xx.toLocaleString()} 5xx</span
+						>
+					</p>
+				</div>
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div class="min-w-0">
+						<p class="mb-1 text-xs font-medium text-ink-2">Top IPs</p>
+						<table class="w-full text-left text-xs">
+							<tbody>
+								{#each data.traffic.topIps as t (t.key)}
+									<tr class="border-t border-rule">
+										<td class="py-1 pr-2 font-mono">{t.key}</td>
+										<td class="py-1 text-right font-mono text-ink-3 tabular-nums"
+											>{t.n.toLocaleString()}</td
+										>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+					<div class="min-w-0">
+						<p class="mb-1 text-xs font-medium text-ink-2">Top paths</p>
+						<table class="w-full text-left text-xs">
+							<tbody>
+								{#each data.traffic.topPaths as t (t.key)}
+									<tr class="border-t border-rule">
+										<td class="max-w-0 truncate py-1 pr-2 font-mono" title={t.key}>{t.key}</td>
+										<td class="py-1 text-right font-mono text-ink-3 tabular-nums"
+											>{t.n.toLocaleString()}</td
+										>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+		{/if}
 	</Module>
 
 	<Module title={data.agent ? 'Generated artifacts' : 'Generated artifacts — guided, not applied'}>

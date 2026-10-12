@@ -27,3 +27,4 @@ export const AGENT_DIR = agentDir;
 export const AGENT_SOCKET = process.env.AGENT_SOCKET;
 export const AGENT_TOKEN = process.env.AGENT_TOKEN;
 export const CF_API_BASE = process.env.CF_API_BASE;
+export const ACCESS_LOG_DIR = process.env.ACCESS_LOG_DIR;
