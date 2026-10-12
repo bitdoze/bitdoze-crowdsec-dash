@@ -4,7 +4,7 @@
  * connect/sync flows: login, paged alerts, and a metrics scrape.
  */
 import { createServer } from 'node:http';
-import { filterAlerts, validateAddAlerts } from './lapi-contract.mjs';
+import { filterAlerts, validateAddAlerts, watcherUAAllowed } from './lapi-contract.mjs';
 
 // Dates are relative to now so rollups, the attack map, and the 24h windows
 // always see the fixture alerts regardless of when the suite runs.
@@ -225,6 +225,12 @@ const server = createServer((req, res) => {
 		let body = '';
 		req.on('data', (c) => (body += c));
 		req.on('end', () => {
+			// Real LAPI rejects a missing/`name`-only User-Agent with the same
+			// 401 body as bad credentials (see lapi-contract.mjs).
+			if (!watcherUAAllowed(req.headers['user-agent'])) {
+				json(401, { code: 401, message: 'incorrect Username or Password' });
+				return;
+			}
 			const { machine_id, password } = JSON.parse(body || '{}');
 			if (machine_id === 'e2e-machine' && password === 'e2e-password') {
 				json(200, { token: 'e2e-jwt', expire: '2999-01-01T00:00:00Z' });
@@ -241,10 +247,11 @@ const server = createServer((req, res) => {
 		return;
 	}
 
-	// Observer-bouncer lookup: keyed by the bouncer key, not the watcher JWT.
+	// Observer-bouncer lookup: real LAPI authenticates bouncers via the
+	// X-Api-Key header and answers 403 "access forbidden" otherwise.
 	if (url.pathname === '/v1/decisions') {
-		if (req.headers.authorization !== 'Bearer e2e-bouncer-key') {
-			json(401, { message: 'unauthorized' });
+		if (req.headers['x-api-key'] !== 'e2e-bouncer-key') {
+			json(403, { message: 'access forbidden' });
 			return;
 		}
 		const ip = url.searchParams.get('ip');

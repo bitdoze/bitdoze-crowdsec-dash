@@ -12,9 +12,27 @@
  * - has_active_decision=true keeps alerts with a decision until >= now
  * - POST /v1/alerts validates required fields (→500) and requires labels
  *   to be []string (object labels → 400)
+ * - POST /v1/watchers/login requires a `name/version`-shaped User-Agent
+ *   (verified against live CrowdSec 1.7.6): a missing UA or one without '/'
+ *   (e.g. undici's default `node`) → 401 {"code":401,"message":"incorrect
+ *   Username or Password"} — the same body as bad credentials.
+ * - Bouncer calls authenticate via the `X-Api-Key` header (verified): a
+ *   Bearer header or no key → 403 {"message":"access forbidden"}. Watcher
+ *   calls use `Authorization: Bearer <jwt>` as usual.
  */
 
 const CENTRAL = new Set(['CAPI', 'lists', 'list']);
+
+/**
+ * The real watchers/login gate: the LAPI parses User-Agent as
+ * `name/version` when registering the machine's client version and rejects
+ * anything without '/' as a credential failure — indistinguishable from a
+ * bad password. Verified on CrowdSec 1.7.6: `foo/`, `/1.0`, `node/24` pass;
+ * `node`, `undici`, missing UA all 401.
+ */
+export function watcherUAAllowed(userAgent) {
+	return typeof userAgent === 'string' && userAgent.includes('/');
+}
 
 /** "90s", "4h30m", "30d", "1h30m" → seconds. Throws on anything else. */
 export function parseGoDuration(s) {

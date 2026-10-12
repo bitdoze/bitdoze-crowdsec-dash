@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { filterAlerts, parseGoDuration, validateAddAlerts } from '../e2e/lapi-contract.mjs';
+import {
+	filterAlerts,
+	parseGoDuration,
+	validateAddAlerts,
+	watcherUAAllowed
+} from '../e2e/lapi-contract.mjs';
 
 const h = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
 
@@ -154,5 +159,21 @@ describe('validateAddAlerts', () => {
 		expect(validateAddAlerts([bad])?.status).toBe(400);
 		const good = { ...valid, labels: ['k', 'v'] };
 		expect(validateAddAlerts([good])).toBeNull();
+	});
+});
+
+describe('watcherUAAllowed', () => {
+	// Verified against live CrowdSec 1.7.6: watcher login needs a
+	// `name/version`-shaped User-Agent — the LAPI 401s without one.
+	it('accepts any UA containing a slash', () => {
+		for (const ua of ['crowdsec/v1.7.6', 'curl/8.5.0', 'foo/bar', 'foo/', '/1.0', 'node/24']) {
+			expect(watcherUAAllowed(ua), ua).toBe(true);
+		}
+	});
+
+	it('rejects missing or slash-less UAs (undici default `node`)', () => {
+		for (const ua of [undefined, '', 'node', 'Node.js', 'node-fetch', 'undici']) {
+			expect(watcherUAAllowed(ua), String(ua)).toBe(false);
+		}
 	});
 });

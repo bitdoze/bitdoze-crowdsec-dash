@@ -44,6 +44,19 @@ describe('LapiClient', () => {
 		);
 	});
 
+	it('sends a name/version User-Agent — real LAPI 401s logins without one', async () => {
+		const { f, calls } = mockFetch((url) =>
+			url.includes('watchers/login') ? login() : new Response('[]', { status: 200 })
+		);
+		await client(f).alerts();
+		expect(calls.length).toBeGreaterThan(0);
+		for (const call of calls) {
+			expect((call.init.headers as Record<string, string>)['User-Agent']).toMatch(
+				/^bitdoze-crowdsec-dash\/\d+\.\d+\.\d+/
+			);
+		}
+	});
+
 	it('returns [] when LAPI answers null for an empty window', async () => {
 		const { f } = mockFetch((url) =>
 			url.includes('watchers/login') ? login() : new Response('null', { status: 200 })

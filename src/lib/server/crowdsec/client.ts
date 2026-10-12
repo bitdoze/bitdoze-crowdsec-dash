@@ -12,6 +12,14 @@
  */
 import { Agent, type Dispatcher } from 'undici';
 import type { LapiAlert, WatchersLoginResponse } from './types.ts';
+import pkg from '../../../../package.json' with { type: 'json' };
+
+/**
+ * Real LAPI requires a `name/version` User-Agent (it records the client
+ * version at login): a missing UA or one without '/' gets a 401 credential
+ * error — undici's default `node` included.
+ */
+const USER_AGENT = `bitdoze-crowdsec-dash/${pkg.version}`;
 
 export type LapiErrorKind = 'auth' | 'unreachable' | 'http' | 'bad_response';
 
@@ -115,13 +123,14 @@ export class LapiClient {
 		return data as LapiAlert[];
 	}
 
-	/** Bearer-key call for the optional observer bouncer credential (tier B). */
+	/**
+	 * Observer-bouncer lookup (tier B). Real LAPI authenticates bouncers via
+	 * `X-Api-Key` — `Authorization: Bearer` gets a 403 "access forbidden"
+	 * (verified against CrowdSec 1.7.6).
+	 */
 	async decisionsByIp(ip: string, bouncerKey: string): Promise<unknown> {
 		const params = new URLSearchParams({ ip });
-		return this.request<unknown>({
-			path: `/v1/decisions?${params}`,
-			authHeader: `Bearer ${bouncerKey}`
-		});
+		return this.request<unknown>({ path: `/v1/decisions?${params}`, apiKey: bouncerKey });
 	}
 
 	/**
@@ -206,24 +215,27 @@ export class LapiClient {
 		method = 'GET',
 		body,
 		auth = true,
-		authHeader,
+		apiKey,
 		allowRetryOn401 = true
 	}: {
 		path: string;
 		method?: string;
 		body?: unknown;
 		auth?: boolean;
-		authHeader?: string;
+		apiKey?: string;
 		allowRetryOn401?: boolean;
 	}): Promise<T> {
 		const attempts = (this.opts.retries ?? DEFAULT_RETRIES) + 1;
 		let lastErr: unknown;
 		for (let attempt = 0; attempt < attempts; attempt++) {
 			if (attempt > 0) await sleep(250 * 2 ** (attempt - 1));
-			const headers: Record<string, string> = { Accept: 'application/json' };
+			const headers: Record<string, string> = {
+				Accept: 'application/json',
+				'User-Agent': USER_AGENT
+			};
 			if (body !== undefined) headers['Content-Type'] = 'application/json';
-			if (authHeader) {
-				headers.Authorization = authHeader;
+			if (apiKey) {
+				headers['X-Api-Key'] = apiKey;
 			} else if (auth) {
 				headers.Authorization = `Bearer ${await this.ensureToken()}`;
 			}
@@ -244,7 +256,7 @@ export class LapiClient {
 			if (res.status === 401 || res.status === 403) {
 				if (auth && allowRetryOn401 && this.token) {
 					this.token = null; // stale JWT — refresh once
-					return this.request({ path, method, body, auth, authHeader, allowRetryOn401: false });
+					return this.request({ path, method, body, auth, apiKey, allowRetryOn401: false });
 				}
 				throw new LapiError('auth', `LAPI returned ${res.status}`, res.status);
 			}
