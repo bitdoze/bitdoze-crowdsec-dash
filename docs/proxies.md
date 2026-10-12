@@ -18,12 +18,12 @@ the administrator merges by hand and confirms via verification checks.
 
 ## Version pins
 
-| Component              | Pin                                                                                    | Notes                                                                                |
-| ---------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Traefik                | `traefik:v3.4`                                                                         | file provider `watch: true` required for managed middleware                          |
-| Traefik bouncer plugin | `crowdsec-bouncer-traefik-plugin` `v1.7.1`                                             | declared via `experimental.plugins`                                                  |
-| Caddy                  | `caddy:2` base + `caddy-crowdsec-bouncer/{http,appsec}@v0.14.1`                        | stock image lacks the module — pinned `xcaddy` build in the Compose artifact         |
-| Nginx                  | `crowdsec-nginx-bouncer` package (or OpenResty manual install)                         | enforcement lives in the package's `crowdsec_nginx.conf`; we only write `log_format` |
+| Component              | Pin                                                                                    | Notes                                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Traefik                | `traefik:v3.4`                                                                         | file provider `watch: true` required for managed middleware                                 |
+| Traefik bouncer plugin | `crowdsec-bouncer-traefik-plugin` `v1.7.1`                                             | declared via `experimental.plugins`                                                         |
+| Caddy                  | `caddy:2` base + `caddy-crowdsec-bouncer/{http,appsec}@v0.14.1`                        | stock image lacks the module — pinned `xcaddy` build in the Compose artifact                |
+| Nginx                  | `crowdsec-nginx-bouncer` package (or OpenResty manual install)                         | enforcement lives in the package's `crowdsec_nginx.conf`; we only write `log_format`        |
 | CrowdSec               | `crowdsecurity/crowdsec:latest` in compose; ≥1.7 required for the LAPI allowlist check | AppSec service needs `appsec.yaml` + matching `appsec_configs` and rule collections (below) |
 
 ## Caddy AppSec details
