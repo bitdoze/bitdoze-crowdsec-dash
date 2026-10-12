@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { e2eDb } from './helpers.ts';
+import { e2eDb, ensureConnected } from './helpers.ts';
 
 /**
  * Agent surface: API keys minted in Settings drive both /api/v1 REST and the
@@ -31,6 +31,9 @@ test('api keys: mint → REST → MCP → scope enforcement → revoke', async (
 
 	// mint an operate key through the real UI
 	const key = await mintKey(page, 'operate');
+
+	// writes below need a live LAPI client — connect first (idempotent)
+	await ensureConnected(page);
 	expect(key.startsWith('csd_')).toBe(true);
 
 	// unauthenticated + bad key get honest 401s

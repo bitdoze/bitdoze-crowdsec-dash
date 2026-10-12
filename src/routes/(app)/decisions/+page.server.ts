@@ -4,6 +4,7 @@ import { desc, sql } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.ts';
 import { decisionRequest } from '#lib/server/db/app.schema.ts';
 import { listDecisions, projectionFreshness } from '#lib/server/crowdsec/lists.ts';
+import { loadEnforcedFeed } from '#lib/server/crowdsec/feed.ts';
 import { buildClient, getServer } from '#lib/server/crowdsec/connection.ts';
 import { reconcile, requestDecision, requestRemoval } from '#lib/server/crowdsec/decisions.ts';
 import { requirePermission, requireUser } from '#lib/server/roles.ts';
@@ -23,6 +24,15 @@ export const load: PageServerLoad = async (event) => {
 		includeExpired: event.url.searchParams.get('expired') === '1',
 		page: Number(event.url.searchParams.get('page') ?? 1) || 1
 	});
+	const enforced = await loadEnforcedFeed(
+		{
+			q: event.url.searchParams.get('fq') ?? undefined,
+			scope: event.url.searchParams.get('fs') ?? undefined,
+			type: event.url.searchParams.get('ft') ?? undefined,
+			page: Number(event.url.searchParams.get('fpage') ?? 1) || 1
+		},
+		db
+	);
 	// Reconcile pending requests against the freshest projection on load —
 	// cheap (indexed lookups) and keeps the status column live.
 	if (srv.connected) await reconcile(db).catch(() => undefined);
@@ -46,6 +56,12 @@ export const load: PageServerLoad = async (event) => {
 		filters: {
 			q: event.url.searchParams.get('q') ?? '',
 			expired: event.url.searchParams.get('expired') === '1'
+		},
+		enforced,
+		feedFilters: {
+			q: event.url.searchParams.get('fq') ?? '',
+			scope: event.url.searchParams.get('fs') ?? '',
+			type: event.url.searchParams.get('ft') ?? ''
 		}
 	};
 };

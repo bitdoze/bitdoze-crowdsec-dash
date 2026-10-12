@@ -53,18 +53,39 @@ test('manual ban pushes, confirms on sync, then unban reconciles', async ({ page
 	await page.getByRole('button', { name: 'Sync now' }).click();
 	await page.goto('/decisions');
 	await expect(requestRow.getByText('Confirmed')).toBeVisible();
-	// And it shows in the active decisions table.
-	await expect(page.getByRole('link', { name: ip })).toBeVisible();
+	// And it shows in the active decisions table — the live feed and the
+	// local projection both link it; first() covers either rendering first.
+	await expect(page.getByRole('link', { name: ip }).first()).toBeVisible();
 
-	// Unban → removing → removed after the next sync drops it.
+	// Unban → removing → removed after the next sync drops it. The ban is
+	// linked from the live feed AND the local log — either Remove posts the
+	// same upstream id, so first() is fine.
 	const decisionRow = page.getByRole('row', { name: ipRe }).filter({ hasText: 'cscli' });
-	await decisionRow.getByRole('button', { name: 'Remove' }).click();
+	await decisionRow.getByRole('button', { name: 'Remove' }).first().click();
 	await expect(page.getByRole('status').filter({ hasText: 'Removal requested' })).toBeVisible();
 	await page.goto('/settings/crowdsec');
 	await page.getByRole('button', { name: 'Sync now' }).click();
 	await page.goto('/decisions');
 	await expect(requestRow.getByText('Removed')).toBeVisible();
 	await expect(page.getByRole('link', { name: ip })).toBeHidden();
+});
+
+test('enforced feed shows live bans with type and origin', async ({ page }) => {
+	await page.goto('/decisions');
+	const feed = page.getByText('Enforced decisions — live');
+	await expect(feed).toBeVisible();
+	// Fixture + embedded live decisions render with origin/type columns.
+	await expect(page.getByRole('row', { name: /10\.99\.0\.0\/16/ })).toContainText('CAPI');
+	await expect(page.getByRole('row', { name: /192\.0\.2\.99/ })).toContainText('captcha');
+	// Search via the feed's real filters: an ip inside the range finds it.
+	await page.getByPlaceholder('IP, CIDR, scenario or value').fill('10.99.1.2');
+	await page.getByRole('button', { name: 'Filter', exact: true }).first().click();
+	await expect(page.getByRole('row', { name: /10\.99\.0\.0\/16/ })).toBeVisible();
+	await expect(page.getByRole('row', { name: /192\.0\.2\.99/ })).toBeHidden();
+	// CAPI rows are centrally managed — Remove only shows on local origins.
+	const capiRow = page.getByRole('row', { name: /10\.99\.0\.0\/16/ });
+	await expect(capiRow.getByText('central')).toBeVisible();
+	await expect(capiRow.getByRole('button', { name: 'Remove' })).toBeHidden();
 });
 
 test('allowlist check reports coverage and mechanisms', async ({ page }) => {

@@ -11,7 +11,7 @@
 
 	let { data, form }: PageProps & { form: ActionData } = $props();
 	const fmt = (d: Date | null) => (d ? new Date(d).toLocaleString() : '—');
-	const isIp = (v: string | null) => !!v && /^[0-9a-fA-F:./]+$/.test(v);
+	const isIp = (v: string | null) => !!v && /^[0-9a-fA-F:.]+$/.test(v);
 	const reqState = {
 		pushed: 'stale',
 		confirmed: 'verified',
@@ -172,6 +172,184 @@
 				</Module>
 			{/if}
 		{/if}
+
+		<Module title="Enforced decisions — live">
+			<p class="mb-3 text-xs text-ink-3">
+				Live <span class="font-mono">/v1/decisions</span> feed — everything this LAPI enforces right
+				now, including the community blocklist (CAPI/lists origins are centrally managed; unban via
+				allowlist).
+				{#if data.enforced.approxTotal !== null}
+					<span class="font-mono text-ink-2">
+						~{data.enforced.approxTotal.toLocaleString()} enforced (per metrics)
+					</span>
+				{/if}
+			</p>
+
+			{#if data.enforced.state === 'no_key'}
+				<p class="text-sm text-ink-3">
+					<Stamp state="not_configured" label="N/C" /> No observer bouncer key configured — add one under
+					<a href={resolve('/(app)/settings/crowdsec')} class="text-accent underline"
+						>Settings → CrowdSec</a
+					> to browse the enforced set.
+				</p>
+			{:else if data.enforced.state === 'no_client'}
+				<p class="text-sm text-ink-3">
+					<Stamp state="not_configured" label="N/C" /> Not connected to a LAPI.
+				</p>
+			{:else if data.enforced.state === 'error'}
+				<p class="text-sm text-failed">Feed query failed: {data.enforced.error}</p>
+			{:else}
+				<form method="get" class="mb-3 flex flex-wrap items-end gap-3">
+					<label class="flex flex-col gap-1 text-xs text-ink-3">
+						Search
+						<input
+							name="fq"
+							value={data.feedFilters.q}
+							placeholder="IP, CIDR, scenario or value"
+							class="w-56 rounded-[3px] border border-line bg-sheet px-2 py-1.5 font-mono text-sm text-ink"
+						/>
+					</label>
+					<label class="flex flex-col gap-1 text-xs text-ink-3">
+						Scope
+						<select
+							name="fs"
+							class="rounded-[3px] border border-line bg-sheet px-2 py-1.5 text-sm text-ink"
+						>
+							<option value="" selected={data.feedFilters.scope === ''}>any</option>
+							{#each ['Ip', 'Range', 'Country', 'AS'] as s (s)}
+								<option value={s} selected={data.feedFilters.scope === s}>{s}</option>
+							{/each}
+						</select>
+					</label>
+					<label class="flex flex-col gap-1 text-xs text-ink-3">
+						Type
+						<select
+							name="ft"
+							class="rounded-[3px] border border-line bg-sheet px-2 py-1.5 text-sm text-ink"
+						>
+							<option value="" selected={data.feedFilters.type === ''}>any</option>
+							{#each ['ban', 'captcha'] as t (t)}
+								<option value={t} selected={data.feedFilters.type === t}>{t}</option>
+							{/each}
+						</select>
+					</label>
+					<Button type="submit">Filter</Button>
+				</form>
+
+				<div class="overflow-x-auto border border-rule bg-sheet">
+					<table class="w-full border-collapse text-sm">
+						<thead>
+							<tr class="border-b border-rule-strong text-left text-xs text-ink-3">
+								<th class="px-3 py-2 font-medium">Value</th>
+								<th class="px-3 py-2 font-medium">Type</th>
+								<th class="px-3 py-2 font-medium">Origin</th>
+								<th class="px-3 py-2 font-medium">Reason</th>
+								<th class="px-3 py-2 font-medium">Remaining</th>
+								{#if data.canOperate}<th class="px-3 py-2 font-medium"></th>{/if}
+							</tr>
+						</thead>
+						<tbody>
+							{#each data.enforced.rows as row (row.id)}
+								<tr class="border-b border-rule last:border-0">
+									<td class="px-3 py-2">
+										{#if row.value && isIp(row.value)}
+											<a
+												href={resolve('/(app)/ip/[ip]', { ip: row.value })}
+												class="font-mono text-xs text-accent underline">{row.value}</a
+											>
+										{:else}
+											<span class="font-mono text-xs text-ink-2">{row.value ?? '—'}</span>
+										{/if}
+										{#if row.scope}<span class="ml-1 text-xs text-ink-3">{row.scope}</span>{/if}
+									</td>
+									<td class="px-3 py-2 font-mono text-xs">
+										<span
+											class={row.type === 'ban'
+												? 'text-failed'
+												: row.type === 'captcha'
+													? 'text-stale'
+													: 'text-ink-2'}>{row.type ?? '—'}</span
+										>
+										{#if row.simulated}
+											<span
+												class="ml-1 text-stale"
+												title="Simulated — flagged in the feed, never enforced">sim</span
+											>
+										{/if}
+									</td>
+									<td class="px-3 py-2 font-mono text-xs text-ink-2">{row.origin ?? '—'}</td>
+									<td class="px-3 py-2 font-mono text-xs break-words text-ink-2">
+										{(row.scenario ?? '—').replace(/^crowdsecurity\//, '')}
+									</td>
+									<td class="px-3 py-2 font-mono text-xs whitespace-nowrap text-ink-2">
+										{row.duration ?? '—'}
+									</td>
+									{#if data.canOperate}
+										<td class="px-3 py-2">
+											{#if row.removable && row.id}
+												<form method="post" action="?/unban">
+													<input type="hidden" name="upstreamId" value={row.id} />
+													<input type="hidden" name="value" value={row.value} />
+													<Button type="submit" size="sm">Remove</Button>
+												</form>
+											{:else}
+												<span
+													class="text-xs text-ink-3"
+													title="Centrally managed — remove by allowlisting the address"
+													>central</span
+												>
+											{/if}
+										</td>
+									{/if}
+								</tr>
+							{:else}
+								<tr>
+									<td
+										colspan={data.canOperate ? 6 : 5}
+										class="px-3 py-8 text-center text-sm text-ink-3"
+									>
+										No enforced decisions match.
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+				{#if data.enforced.page > 1 || data.enforced.hasNext}
+					<nav class="mt-3 flex items-center gap-2 text-sm" aria-label="Feed pagination">
+						<!-- eslint-disable svelte/no-navigation-without-resolve -->
+						{#if data.enforced.page > 1}
+							<a
+								href={resolve('/(app)/decisions') +
+									`?${new URLSearchParams({
+										...(data.feedFilters.q ? { fq: data.feedFilters.q } : {}),
+										...(data.feedFilters.scope ? { fs: data.feedFilters.scope } : {}),
+										...(data.feedFilters.type ? { ft: data.feedFilters.type } : {}),
+										...(data.enforced.page > 2 ? { fpage: String(data.enforced.page - 1) } : {})
+									}).toString()}`}
+								class="border border-line bg-sheet px-2 py-1 text-ink-2 hover:bg-panel">Previous</a
+							>
+						{/if}
+						<span class="px-1 font-mono text-xs text-ink-3 tabular-nums">
+							page {data.enforced.page}
+						</span>
+						{#if data.enforced.hasNext}
+							<a
+								href={resolve('/(app)/decisions') +
+									`?${new URLSearchParams({
+										...(data.feedFilters.q ? { fq: data.feedFilters.q } : {}),
+										...(data.feedFilters.scope ? { fs: data.feedFilters.scope } : {}),
+										...(data.feedFilters.type ? { ft: data.feedFilters.type } : {}),
+										fpage: String(data.enforced.page + 1)
+									}).toString()}`}
+								class="border border-line bg-sheet px-2 py-1 text-ink-2 hover:bg-panel">Next</a
+							>
+						{/if}
+						<!-- eslint-enable svelte/no-navigation-without-resolve -->
+					</nav>
+				{/if}
+			{/if}
+		</Module>
 
 		<form method="get" class="flex flex-wrap items-end gap-3">
 			<label class="flex flex-col gap-1 text-xs text-ink-3">

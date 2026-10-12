@@ -4,7 +4,13 @@
  * connect/sync flows: login, paged alerts, and a metrics scrape.
  */
 import { createServer } from 'node:http';
-import { filterAlerts, validateAddAlerts, watcherUAAllowed } from './lapi-contract.mjs';
+import {
+	decisionLive,
+	filterAlerts,
+	filterDecisionsFeed,
+	validateAddAlerts,
+	watcherUAAllowed
+} from './lapi-contract.mjs';
 
 // Dates are relative to now so rollups, the attack map, and the 24h windows
 // always see the fixture alerts regardless of when the suite runs.
@@ -132,6 +138,48 @@ cs_lapi_requests_total{endpoint="/v1/alerts",method="get"} 9
 
 let down = false;
 
+// Enforced-feed fixtures — entries that exist only in the decisions feed,
+// mirroring the centralized blocklist (the bulk of a real feed). Live
+// alert-embedded decisions join the feed in the handler below.
+const FEED_FIXTURES = [
+	{
+		id: 9001,
+		origin: 'CAPI',
+		type: 'ban',
+		scope: 'Ip',
+		value: '203.0.113.7',
+		duration: '72h',
+		scenario: 'crowdsecurity/community-blocklist'
+	},
+	{
+		id: 9003,
+		origin: 'CAPI',
+		type: 'ban',
+		scope: 'Range',
+		value: '10.99.0.0/16',
+		duration: '48h',
+		scenario: 'lists:firehol_level1'
+	},
+	{
+		id: 9004,
+		origin: 'CAPI',
+		type: 'ban',
+		scope: 'Country',
+		value: 'CN',
+		duration: '24h',
+		scenario: 'lists:geo-block'
+	},
+	{
+		id: 9005,
+		origin: 'crowdsec',
+		type: 'captcha',
+		scope: 'Ip',
+		value: '192.0.2.99',
+		duration: '1h',
+		scenario: 'crowdsecurity/http-crawl-non_statics'
+	}
+];
+
 // Manual decisions pushed via POST /v1/alerts — surfaced back through
 // GET /v1/alerts so the projection confirms them like a real LAPI.
 // Ids are seeded per-process because .e2e-data persists across runs — a
@@ -253,39 +301,33 @@ const server = createServer((req, res) => {
 		return;
 	}
 
-	// Observer-bouncer lookup: real LAPI authenticates bouncers via the
+	// Observer-bouncer endpoints: real LAPI authenticates bouncers via the
 	// X-Api-Key header and answers 403 "access forbidden" otherwise.
 	if (url.pathname === '/v1/decisions') {
 		if (req.headers['x-api-key'] !== 'e2e-bouncer-key') {
 			json(403, { message: 'access forbidden' });
 			return;
 		}
-		const ip = url.searchParams.get('ip');
-		json(
-			200,
-			ip === '203.0.113.7'
-				? [
-						{
-							id: 9001,
-							origin: 'CAPI',
-							type: 'ban',
-							scope: 'Ip',
-							value: '203.0.113.7',
-							duration: '72h',
-							scenario: 'crowdsecurity/community-blocklist'
-						},
-						{
-							id: 9002,
-							origin: 'crowdsec',
-							type: 'ban',
-							scope: 'Ip',
-							value: '203.0.113.7',
-							duration: '4h',
-							scenario: 'crowdsecurity/http-probing'
-						}
-					]
-				: []
-		);
+		// The enforced feed = live decisions only. On real upstream a deleted
+		// decision drops out of the feed entirely (it stays embedded on its
+		// alert with a negative duration); expired ones drop out too.
+		const items = [
+			...FEED_FIXTURES.filter((d) => !deletedDecisions.has(d.id)),
+			...[...ALERTS, ...manualAlerts].flatMap((a) =>
+				(a.decisions ?? [])
+					.map((d) => ({
+						...d,
+						// Real feed flags decisions from simulated alerts — they're
+						// returned but never enforced.
+						...(a.simulated ? { simulated: true } : {}),
+						...(deletedDecisions.has(d.id) ? { duration: '-1s' } : {})
+					}))
+					.filter((d) => decisionLive(d))
+			)
+		];
+		const { decisions } = filterDecisionsFeed(items, url.searchParams);
+		// Real empty result is bare null, never [].
+		json(200, decisions.length ? decisions : null);
 		return;
 	}
 

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	decisionLive,
 	filterAlerts,
+	filterDecisionsFeed,
+	ipv4CidrContains,
 	parseGoDuration,
 	signedGoDuration,
 	validateAddAlerts,
@@ -199,6 +201,104 @@ describe('validateAddAlerts', () => {
 		expect(validateAddAlerts([bad])?.status).toBe(400);
 		const good = { ...valid, labels: ['k', 'v'] };
 		expect(validateAddAlerts([good])).toBeNull();
+	});
+});
+
+describe('ipv4CidrContains', () => {
+	it('matches inside and outside the mask', () => {
+		expect(ipv4CidrContains('10.99.0.0/16', '10.99.44.2')).toBe(true);
+		expect(ipv4CidrContains('10.99.0.0/16', '10.98.0.1')).toBe(false);
+		expect(ipv4CidrContains('203.0.113.0/24', '203.0.113.7')).toBe(true);
+		expect(ipv4CidrContains('203.0.113.0/24', '203.0.114.7')).toBe(false);
+	});
+	it('treats a bare ip as /32 and rejects garbage', () => {
+		expect(ipv4CidrContains('203.0.113.7', '203.0.113.7')).toBe(true);
+		expect(ipv4CidrContains('203.0.113.7', '203.0.113.8')).toBe(false);
+		expect(ipv4CidrContains('nope/24', '1.2.3.4')).toBe(false);
+		expect(ipv4CidrContains('10.0.0.0/33', '10.0.0.1')).toBe(false);
+	});
+});
+
+describe('filterDecisionsFeed', () => {
+	// Shape verified on real 1.7.6: {id, origin, type, scope, value,
+	// scenario, duration} — duration is the signed remaining time.
+	const items = [
+		{
+			id: 1,
+			origin: 'CAPI',
+			type: 'ban',
+			scope: 'Ip',
+			value: '203.0.113.7',
+			scenario: 'ssh:bruteforce',
+			duration: '72h'
+		},
+		{
+			id: 2,
+			origin: 'CAPI',
+			type: 'ban',
+			scope: 'Range',
+			value: '10.99.0.0/16',
+			scenario: 'lists:firehol',
+			duration: '48h'
+		},
+		{
+			id: 3,
+			origin: 'crowdsec',
+			type: 'captcha',
+			scope: 'Ip',
+			value: '192.0.2.9',
+			scenario: 'crowdsecurity/http-crawl',
+			duration: '1h'
+		},
+		{
+			id: 4,
+			origin: 'cscli',
+			type: 'ban',
+			scope: 'Country',
+			value: 'CN',
+			scenario: 'manual geo',
+			duration: '24h'
+		}
+	];
+
+	it('ip covers exact values AND containing ranges (verified)', () => {
+		const { decisions } = filterDecisionsFeed(items, q('ip=10.99.44.2'));
+		expect(decisions.map((d) => d.id)).toEqual([2]);
+		const both = filterDecisionsFeed(items, q('ip=203.0.113.7'));
+		expect(both.decisions.map((d) => d.id)).toEqual([1]);
+	});
+
+	it('contains behaves like ip upstream (redundant but accepted)', () => {
+		const { decisions } = filterDecisionsFeed(items, q('contains=true&ip=203.0.113.7'));
+		expect(decisions.map((d) => d.id)).toEqual([1]);
+	});
+
+	it('range matches the CIDR itself and Ip values inside it', () => {
+		expect(filterDecisionsFeed(items, q('range=10.99.0.0/16')).decisions.map((d) => d.id)).toEqual([
+			2
+		]);
+		expect(
+			filterDecisionsFeed(items, q('range=203.0.113.0/24')).decisions.map((d) => d.id)
+		).toEqual([1]);
+	});
+
+	it('scope/value/type/scenario filter exactly; origin is ignored upstream', () => {
+		expect(filterDecisionsFeed(items, q('scope=Country')).decisions.map((d) => d.id)).toEqual([4]);
+		expect(filterDecisionsFeed(items, q('type=captcha')).decisions.map((d) => d.id)).toEqual([3]);
+		expect(filterDecisionsFeed(items, q('value=CN')).decisions.map((d) => d.id)).toEqual([4]);
+		expect(
+			filterDecisionsFeed(items, q('scenario=ssh:bruteforce')).decisions.map((d) => d.id)
+		).toEqual([1]);
+		// Real LAPI ignores `origin` entirely — no filter, no error.
+		expect(filterDecisionsFeed(items, q('origin=CAPI')).decisions).toHaveLength(4);
+	});
+
+	it('offset+limit page the result', () => {
+		expect(filterDecisionsFeed(items, q('limit=2')).decisions.map((d) => d.id)).toEqual([1, 2]);
+		expect(filterDecisionsFeed(items, q('offset=2&limit=2')).decisions.map((d) => d.id)).toEqual([
+			3, 4
+		]);
+		expect(filterDecisionsFeed(items, q('offset=3')).decisions.map((d) => d.id)).toEqual([4]);
 	});
 });
 

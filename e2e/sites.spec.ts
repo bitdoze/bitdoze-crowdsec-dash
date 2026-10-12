@@ -173,5 +173,6 @@ test('sites: two topologies share the decision feed a ban lands on', async ({ pa
 	await expect(page.getByRole('link', { name: hostA })).toBeVisible();
 	await expect(page.getByRole('link', { name: hostB })).toBeVisible();
 	await page.goto('/decisions');
-	await expect(page.getByRole('link', { name: banIp })).toBeVisible();
+	// Live feed + local projection both link the ban — assert one visible.
+	await expect(page.getByRole('link', { name: banIp }).first()).toBeVisible();
 });

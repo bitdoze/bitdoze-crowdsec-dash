@@ -22,6 +22,12 @@
  * - Bouncer calls authenticate via the `X-Api-Key` header (verified): a
  *   Bearer header or no key → 403 {"message":"access forbidden"}. Watcher
  *   calls use `Authorization: Bearer <jwt>` as usual.
+ * - GET /v1/decisions (bouncer feed, verified on 1.7.6) returns only ACTIVE
+ *   decisions — items carry {id, origin, type, scope, value, scenario,
+ *   duration} where duration is the signed remaining Go duration. Honored
+ *   filters: ip, contains, range, scope, value, type, scenario, limit,
+ *   offset. `origin` is silently IGNORED (no filter, no error). An empty
+ *   result is bare `null`, never [].
  */
 
 const CENTRAL = new Set(['CAPI', 'lists', 'list']);
@@ -57,6 +63,58 @@ export function signedGoDuration(s) {
 	}
 	if (matched !== body) return null;
 	return negative ? -total : total;
+}
+
+/** IPv4 containment: "203.0.113.0/24" covers "203.0.113.7". */
+export function ipv4CidrContains(cidr, ip) {
+	const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)(?:\/(\d+))?$/.exec(cidr ?? '');
+	const i = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip ?? '');
+	if (!m || !i) return false;
+	const bits = m[5] === undefined ? 32 : Number(m[5]);
+	if (bits < 0 || bits > 32) return false;
+	// m has a 5th group (the mask bits) — only the first four are octets.
+	const oct = (a) => a.slice(1, 5).reduce((acc, o) => (acc << 8) + Number(o), 0) >>> 0;
+	const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+	return (oct(m) & mask) === (oct(i) & mask);
+}
+
+const isIpv4 = (v) => /^\d+\.\d+\.\d+\.\d+$/.test(v ?? '');
+
+/** A decision covers the ip when its value equals it, or its range contains it. */
+const coversIp = (d, ip) => d.value === ip || ipv4CidrContains(d.value, ip);
+
+/**
+ * GET /v1/decisions feed filtering, mirroring real 1.7.6 (verified):
+ * - ip → covering match (exact value or containing range); `contains` is
+ *   accepted alongside without changing the match set for Ip-scope values
+ * - range → decisions on that CIDR or Ip-scope values inside it
+ * - scope / value / type / scenario → exact equality
+ * - `origin` (and any unknown param) is silently ignored upstream
+ * - offset/limit are honored (real feed has no total count)
+ */
+export function filterDecisionsFeed(items, params) {
+	const get = (k) => params.get(k);
+	const ip = get('ip');
+	const range = get('range');
+	const scope = get('scope');
+	const value = get('value');
+	const type = get('type');
+	const scenario = get('scenario');
+	let out = items;
+	if (ip) out = out.filter((d) => coversIp(d, ip));
+	if (range)
+		out = out.filter(
+			(d) => d.value === range || (isIpv4(d.value) && ipv4CidrContains(range, d.value))
+		);
+	if (scope) out = out.filter((d) => (d.scope ?? '').toLowerCase() === scope.toLowerCase());
+	if (value) out = out.filter((d) => d.value === value);
+	if (type) out = out.filter((d) => d.type === type);
+	if (scenario) out = out.filter((d) => d.scenario === scenario);
+	const offset = Math.max(0, Number(get('offset')) || 0);
+	if (offset) out = out.slice(offset);
+	const limit = get('limit');
+	if (limit !== null && limit !== undefined) out = out.slice(0, Math.max(0, Number(limit) || 0));
+	return { decisions: out };
 }
 
 /**

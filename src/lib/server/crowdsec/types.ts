@@ -35,6 +35,19 @@ export interface LapiDecision {
 	simulated?: boolean;
 }
 
+/** GET /v1/decisions feed filters honored by real 1.7.x (verified). */
+export interface DecisionFeedQuery {
+	ip?: string;
+	contains?: boolean;
+	range?: string;
+	scope?: string;
+	value?: string;
+	type?: string;
+	scenario?: string;
+	limit?: number;
+	offset?: number;
+}
+
 export interface LapiAlert {
 	id?: number;
 	uuid?: string;

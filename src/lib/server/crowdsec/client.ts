@@ -11,7 +11,7 @@
  * backoff cover transient 5xx/network errors.
  */
 import { Agent, type Dispatcher } from 'undici';
-import type { LapiAlert, WatchersLoginResponse } from './types.ts';
+import type { DecisionFeedQuery, LapiAlert, LapiDecision, WatchersLoginResponse } from './types.ts';
 import pkg from '../../../../package.json' with { type: 'json' };
 
 /**
@@ -131,6 +131,25 @@ export class LapiClient {
 	async decisionsByIp(ip: string, bouncerKey: string): Promise<unknown> {
 		const params = new URLSearchParams({ ip });
 		return this.request<unknown>({ path: `/v1/decisions?${params}`, apiKey: bouncerKey });
+	}
+
+	/**
+	 * Live enforced-decisions feed (GET /v1/decisions via observer key).
+	 * Real 1.7.x honors ip/contains/range/scope/value/type/scenario/limit/
+	 * offset, silently ignores `origin`, and answers bare `null` (not [])
+	 * for an empty result — normalized to [] here.
+	 */
+	async decisions(query: DecisionFeedQuery, bouncerKey: string): Promise<LapiDecision[]> {
+		const params = new URLSearchParams();
+		for (const [k, v] of Object.entries(query)) {
+			if (v === undefined || v === '') continue;
+			params.set(k, typeof v === 'boolean' ? String(v) : String(v));
+		}
+		const data = await this.request<unknown>({
+			path: `/v1/decisions?${params}`,
+			apiKey: bouncerKey
+		});
+		return Array.isArray(data) ? (data as LapiDecision[]) : [];
 	}
 
 	/**

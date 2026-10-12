@@ -72,7 +72,11 @@ test('alerts page lists synced alerts with attribution', async ({ page }) => {
 	// bans never enter the projection (edge sync would enforce them at CF).
 	await expect(page.getByRole('link', { name: '198.51.100.99', exact: true })).toHaveCount(0);
 	await page.goto('/decisions');
-	await expect(page.getByText('198.51.100.99')).toHaveCount(0);
+	// The live feed returns simulated decisions flagged — the row is marked
+	// 'sim', never presented as real enforcement.
+	const simRow = page.getByRole('row', { name: /198\.51\.100\.99/ });
+	await expect(simRow.locator('[title^="Simulated"]')).toBeVisible();
+	await expect(simRow.getByRole('link', { name: '198.51.100.99' })).toBeVisible();
 });
 
 test('filtering by source IP narrows the log', async ({ page }) => {
@@ -83,7 +87,8 @@ test('filtering by source IP narrows the log', async ({ page }) => {
 
 test('decisions page shows active vs expired state', async ({ page }) => {
 	await page.goto('/decisions');
-	await expect(page.getByRole('link', { name: '203.0.113.7', exact: true })).toBeVisible();
+	// Linked from the live feed AND the local projection — first() covers either.
+	await expect(page.getByRole('link', { name: '203.0.113.7', exact: true }).first()).toBeVisible();
 	// The ssh decision expired in the fixture — hidden unless requested.
 	await expect(page.getByRole('link', { name: '198.51.100.23', exact: true })).toBeHidden();
 	await page.goto('/decisions?expired=1');
